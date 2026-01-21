@@ -6,24 +6,22 @@
 
 TeensyTimerTool::PeriodicTimer timer_(TeensyTimerTool::TCK);
 
-constexpr float CURR_GAIN = 5.f; // Amps / Volt
+constexpr float CURR_GAIN = 3.3333333f; // Amps / Volt
 constexpr int ADC_RES = 10;
 
-InlineCurrentSensor Current_Phase_B{A8, CURR_GAIN, ADC_RES};
-InlineCurrentSensor Current_Phase_C{A9, CURR_GAIN, ADC_RES};
+InlineCurrentSensor Current_Phase_B{A3, CURR_GAIN, ADC_RES};
+InlineCurrentSensor Current_Phase_C{A8, CURR_GAIN, ADC_RES};
 InlineCurrentSensorPackage Current_Sensors{{&Current_Phase_C, &Current_Phase_B}};
-
 constexpr float PWM_FREQ = 20000.f;
 constexpr int PWM_RES = 12;
-constexpr float DRIVER_VOLTAGE = 24.f;
+constexpr float DRIVER_VOLTAGE = 16.f;
 
-BrushlessDriver GateDriver{{2, 3, 4}, 1, PWM_FREQ, PWM_RES, DRIVER_VOLTAGE};
+BrushlessDriver GateDriver{{6, 5, 4}, 3, PWM_FREQ, PWM_RES, DRIVER_VOLTAGE};
 
-const uint16_t EncoderReadCmd = (0b11 << 14) | 0x3FFF;
+const uint16_t EncoderReadCmd = (0b11 << 14) | 0xFFFF;
 SPIEncoder Encoder{EncoderReadCmd, SPI, 10};
 
-BrushlessController controller_{EC45_Flat, GateDriver, Current_Sensors, Encoder};
-
+BrushlessController controller_{GL40, GateDriver, Current_Sensors, Encoder};
 
 void setup()
 {
@@ -47,14 +45,14 @@ void setup()
     exit(0);
   }
 
-  controller_.set_e_angle_offset(0.97f);
+  // controller_.set_e_angle_offset(0.97f);  // WHY IS THIS LINE HERE?
 
   Serial.println("Preparing to run");
   delay(1000);
 
   controller_.set_control_mode(ControllerMode::TORQUE);
 
-  controller_.set_target(0.f);
+  controller_.set_target(0.1f);
 
   controller_.start_control(100);
 
