@@ -57,22 +57,23 @@ PositionController::PositionController(double Kp, double Ki, double Kd)
 
 }
 
-double PositionController::pump_controller(double setpoint, double actual)
+double PositionController::pump_controller(double setpoint, double actual, float shaft_vel)
 {
     err = setpoint - actual;
     if (Icntrl_) {err_int += err;}
-    if (Dcntrl_) { err_der = (err - err_prev) / 0.0001;} // divide by dt = 100us
+    // plug - shaft velocity in for
+    if (Dcntrl_) { err_der = (shaft_vel);} // divide by dt = 100us
     err_prev = err;
 
     // clamp err_int
     if (err_int > clamp_val_ && Icntrl_)
     {
-        Serial.println("Clamping integrated error to max.");
+        // Serial.println("Clamping integrated error to max.");
         err_int = clamp_val_;
     } 
     else if (err_int < -clamp_val_ && Icntrl_)
     {
-        Serial.println("Clamping integrated error to min.");
+        // Serial.println("Clamping integrated error to min.");
         err_int = -clamp_val_;
     }
 

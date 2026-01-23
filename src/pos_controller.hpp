@@ -9,7 +9,7 @@ public:
     PositionController(double Kp);
     PositionController(double Kp, double Ki);
     PositionController(double Kp, double Ki, double Kd);
-    double pump_controller(double setpoint, double actual);
+    double pump_controller(double setpoint, double actual, float shaft_vel);
 
 private:
     double Kp_;

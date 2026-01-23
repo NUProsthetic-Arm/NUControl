@@ -135,7 +135,7 @@ public:
   {
     e_ang_offset_ = 0.f;
 
-    auto ret = cs_.align_sensors(driver_);
+    auto ret = cs_.align_sensors(driver_, 1.f);
 
     delay(1000);
     open_loop_shaft_angle_ = 1.5f * PI;
@@ -196,6 +196,7 @@ public:
 
     shaft_angle_.direction = pos_sensor_dir_;
     // One last call to flush anything in case we flipped directions
+    stop_control();
     update_sensors();
 
     if (!skip_eang) {
@@ -389,7 +390,7 @@ public:
           PhaseValues<float> ctrl_volts{0.f, 0.f, 0.f};
           
           // Pump controllers
-          if(feedback_enable_) { ctrl_volts += feedforward(desr_current); }
+          if(feedforward_enable_) { ctrl_volts += feedforward(desr_current); }
           if(feedback_enable_) { ctrl_volts += feedback(desr_current); }
           if(back_emf_enable_) { ctrl_volts += back_emf_decoupler(); }
 
