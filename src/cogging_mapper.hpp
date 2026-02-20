@@ -1,8 +1,10 @@
 #include "brushless_controller.hpp"
+#include <array>
 
+
+template<std::size_t steps_>
 class CoggingMapper
 {
-
     public:
         CoggingMapper() = default;
         ~CoggingMapper() = default;
@@ -10,7 +12,9 @@ class CoggingMapper
         CoggingMapper(BrushlessController & controller)
         : controller_(controller),
           timer_(TeensyTimerTool::TCK)
-        {};
+        {
+            controller.disable_anticog();
+        };
 
         void map_cogging(int loops)
         {
@@ -27,11 +31,9 @@ class CoggingMapper
         BrushlessController & controller_;
         TeensyTimerTool::PeriodicTimer timer_;
 
-        // size_t COGGING_STEPS = 1000;
-
-        std::vector<float> positions_ = std::vector<float>(COGGING_STEPS, 0.f);
-        std::vector<float> torques_ = std::vector<float>(COGGING_STEPS, 0.f);
-        std::vector<PhaseValues<float>> phase_volts_ = std::vector<PhaseValues<float>>(COGGING_STEPS, {0.f, 0.f, 0.f});
+        std::array<float, steps_> positions_{};
+        std::array<float, steps_> torques_{};
+        std::array<PhaseValues<float>,steps_> phase_volts_{};
 
         float pos_target = 0.f;
         size_t idx = 0;
@@ -50,9 +52,9 @@ class CoggingMapper
         int clk_start = 0;
         float pos_err_tol = 0.0025f;
         bool locked = false;
-        size_t torque_steps_ = 1000; // Control Frequency * torque_steps_ = settling time = 0.1s by default
-        std::vector<float> temp_torques_ = std::vector<float>(torque_steps_, 0.f);
-        std::vector<PhaseValues<float>> temp_phase_volts_ = std::vector<PhaseValues<float>>(torque_steps_, {0.f, 0.f, 0.f});
+        constexpr static size_t torque_steps_ = 1000; // Control Frequency * torque_steps_ = settling time = 0.1s by default
+        std::array<float, torque_steps_> temp_torques_{};
+        std::array<PhaseValues<float>, torque_steps_> temp_phase_volts_{};
 
 
         void target_selector(int direction = 1)

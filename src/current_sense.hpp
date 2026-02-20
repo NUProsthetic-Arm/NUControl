@@ -128,6 +128,19 @@ public:
     return all_inited;
   }
 
+  void print_calibration()
+  {
+    Serial.println("Phase Indicies: ");
+    Serial.println(phase_idx_.a);
+    Serial.println(phase_idx_.b);
+    Serial.println(phase_idx_.c);
+
+    Serial.println("Phase Directions: ");
+    Serial.println(phase_dirs_.a);
+    Serial.println(phase_dirs_.b);
+    Serial.println(phase_dirs_.c);
+  }
+
   bool align_sensors(BrushlessDriver & driver, float align_volts = 0.5f)
   {
 
@@ -216,19 +229,20 @@ public:
       }
     }
 
-    Serial.println("Phase Indicies: ");
-    Serial.println(phase_idx_.a);
-    Serial.println(phase_idx_.b);
-    Serial.println(phase_idx_.c);
-
-    Serial.println("Phase Directions: ");
-    Serial.println(phase_dirs_.a);
-    Serial.println(phase_dirs_.b);
-    Serial.println(phase_dirs_.c);
+    print_calibration();
 
     aligned_ = true;
     return aligned_;
 
+  }
+
+  bool load_calibration(PhaseValues<int> phase_idx, PhaseValues<int> phase_dirs)
+  {
+    phase_idx_ = phase_idx;
+    phase_dirs_ = phase_dirs;
+    print_calibration();
+    aligned_ = true;
+    return aligned_;
   }
 
   PhaseValues<float> get_phase_currents(bool filter = true)

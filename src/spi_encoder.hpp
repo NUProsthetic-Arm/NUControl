@@ -34,11 +34,17 @@ public:
   float read()
   {
     auto read = read_raw();
-    if(read == 0 || read == 16383)
+    if(glitch_filter_enable && (read == 0 || read == 16383))
     {
       return -1.f;
     }
-    return static_cast<float>(read_raw()) / static_cast<float>(max_read_ - 1) * _2_PI_;
+    return static_cast<float>(read) / static_cast<float>(max_read_ - 1) * _2_PI_;
+  }
+
+  void set_glitch_filter_state(bool state)
+  {
+    glitch_filter_enable = state;
+
   }
 
   uint16_t read_raw()
@@ -55,10 +61,11 @@ public:
   }
 
 private:
+  const uint16_t read_cmd_;
   SPIClass & SPI_;
   const SPISettings settings_;
   const int cs_;
-  const uint16_t read_cmd_;
   const int max_read_;
+  bool glitch_filter_enable = true;
 };
 #endif

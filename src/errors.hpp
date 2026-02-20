@@ -10,7 +10,6 @@ enum WarningCodes
   DRIVER_VOLTAGE_EXCEEDS_USER_LIMIT,
 };
 
-
 enum ErrorCodes
 {
   CURRENT_SENSE_OVER_LIMIT,

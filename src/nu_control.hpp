@@ -11,7 +11,8 @@
 #include "brushless_controller.hpp"
 #include "spi_encoder.hpp"
 #include "transformations.hpp"
-#include "cogging_comp.hpp"
+#include "cogging_mapper.hpp"
 #include "userConfig.h"
+#include "vel_filters.hpp"
 
 #endif

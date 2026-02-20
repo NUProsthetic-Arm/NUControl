@@ -7,13 +7,29 @@
 #include "encoder.hpp"
 #include "discrete_filter.hpp"
 #include "motors.hpp"
-#include "anticogging_mapper.hpp"
+#include "anticog_helpers.hpp"
+#include <functional>
 
 enum ControllerMode
 {
   DISABLE,
   OPEN_LOOP_VELOCITY,
   TORQUE,
+};
+
+struct BrushlessCalibration
+{
+  const PhaseValues<int> cs_phase_idx{-1, -1, -1};
+  const PhaseValues<int> cs_phase_dirs{0, 0, 0};
+
+  const int encoder_direction{0};
+  const float encoder_offset{0};
+
+  const float cogging_offset_ = 0;
+
+  // constexpr std::array<float, steps_> anticog_torque{};
+  // constexpr PhaseValues<std::array<float, steps_>> anticog_volts{}; 
+
 };
 
 class BrushlessController
@@ -32,9 +48,7 @@ public:
     cs_(current_sensors),
     position_sensor_(pos_sensor),
     ctrl_timer_(TeensyTimerTool::TCK),
-    print_timer_(TeensyTimerTool::TCK),
-    anticog_map_(default_anticog_map),
-    anticog_volt_map_(default_anticog_volt_map)
+    print_timer_(TeensyTimerTool::TCK)
   {
     Kp_ = motor_.phase_L * _2_PI_ * 25.f; // Ohms = V / A
     Ki_ = motor_.phase_R * _2_PI_ * 25.f; // Ohms * s = Vs / A
@@ -125,10 +139,9 @@ public:
 
   void set_position_filter(DiscreteFilter<float, float> pos_filter) { pos_filter_ = pos_filter; }
 
-  void stop_print()
-  {
-    print_timer_.stop();
-  }
+  void stop_print() { print_timer_.stop(); }
+
+
 
   bool init_components()
   {
@@ -139,6 +152,12 @@ public:
 
     return ret_d & ret_cs;
 
+  }
+
+  void print_calibration(){
+    cs_.print_calibration();
+    Serial.println(pos_sensor_dir_);
+    Serial.println(encoder_offset_);
   }
 
   bool align_sensors(bool e_angle_align = true)
@@ -158,7 +177,7 @@ public:
     open_loop_shaft_velocity_ = 0.f;
 
     set_control_mode(ControllerMode::OPEN_LOOP_VELOCITY);
-    target_ = calibration_scan_speed_;
+    target_ = static_cast<float>(calibration_dir_) * calibration_scan_speed_;
 
     start_control(1000, false);
 
@@ -168,7 +187,7 @@ public:
     float enc_sum = 0.f;
     int steps = 0;
 
-    while(open_loop_shaft_angle_ < calibration_scan_distance_){
+    while(open_loop_shaft_angle_ < static_cast<float>(calibration_dir_) * calibration_scan_distance_){
       update_sensors();
       enc_sum += encoder_angle.get_angle();
       steps++;
@@ -183,11 +202,11 @@ public:
     Serial.println("Forward Move Complete");
     Serial.flush();
 
-    if(encoder_angle.get_full_angle() > init_ang + 0.5f * calibration_scan_distance_){
+    if(encoder_angle.get_full_angle() > init_ang + 0.1){
       pos_sensor_dir_ = 1;
       Serial.println("Direction is: 1");
     } else {
-      if(encoder_angle.get_full_angle() < init_ang - 0.5f * calibration_scan_distance_){
+      if(encoder_angle.get_full_angle() < init_ang - 0.1){
         pos_sensor_dir_ = -1;
         Serial.println("Direction is: -1");
       }
@@ -201,9 +220,9 @@ public:
     start_control(1000, false);
     open_loop_shaft_angle_ = 0.f;
     open_loop_shaft_velocity_ = 0.f;
-    target_ = -calibration_scan_speed_;
+    target_ = static_cast<float>(calibration_dir_) * -calibration_scan_speed_;
 
-    while(open_loop_shaft_angle_ > -calibration_scan_distance_){
+    while(open_loop_shaft_angle_ > static_cast<float>(calibration_dir_) * -calibration_scan_distance_){
       update_sensors();
       enc_sum += encoder_angle.get_angle();
       steps++;
@@ -227,6 +246,18 @@ public:
     return ret;
   }
 
+  bool load_calibration(BrushlessCalibration calib_)
+  {
+    auto ret = cs_.load_calibration(calib_.cs_phase_idx, calib_.cs_phase_dirs);
+
+    set_encoder_direction(calib_.encoder_direction);
+    set_encoder_offset(calib_.encoder_offset);
+
+    print_calibration();
+
+    return ret;
+  }
+
   float get_encoder_offset() const { return encoder_offset_; }
   float get_shaft_angle() const { return shaft_angle_; }
   float get_shaft_radians() const { return normalize_angle(shaft_angle_); }
@@ -241,32 +272,39 @@ public:
       Serial.println("Error: Invalid Direction. Please use 1 or -1");
       return;
     }
-    
   }
   void set_encoder_offset(float offset) { encoder_offset_ = offset; }
   void set_calibration_scan_speed(float w) { calibration_scan_speed_ = w;}
   void set_calibration_scan_range (float rads) {calibration_scan_distance_ = rads;}
+  void set_calibation_direction(int dir) {
+      if(dir == 1){ calibration_dir_= 1; return;}
+      if(dir == -1){ calibration_dir_= -1; return;}
+      else{
+        Serial.println("Error: Invalid Direction. Please use 1 or -1");
+        return;
+      }
+  }
 
-  void enable_anticog(const std::vector<float> & map)
+  void enable_anticog(const std::function<float(float)> & torque_mapper)
   {
     disable_anticog();
     anticog_enable_ = true;
-    anticog_map_ = map;
+    torque_mapper_ = torque_mapper;
   }
 
-  void enable_anticog(const PhaseValues<std::vector<float>> & map)
+  void enable_anticog(const std::function<PhaseValues<float>(float)> & volt_mapper)
   {
     disable_anticog();
     anticog_volt_enable_ = true;
-    anticog_volt_map_ = map;
+    volt_mapper_ = volt_mapper;
   }
 
   void disable_anticog()
   {
     anticog_volt_enable_ = false;
     anticog_enable_ = false;
-    anticog_map_ = default_anticog_map;
-    anticog_volt_map_ = default_anticog_volt_map;
+    torque_mapper_ = [](float angle) -> float {return 0.f;};
+    volt_mapper_ = [](float angle) -> PhaseValues<float> {return {0.f, 0.f, 0.f};};
   }
 
   void set_feedforward_state(bool state){ feedforward_enable_ = state; }
@@ -319,7 +357,7 @@ public:
           
 
           // Add in cogging torque if needed 
-          if (anticog_enable_) { target_ += get_cogging_torque(shaft_angle_ - cogging_offset_, anticog_map_); }
+          if (anticog_enable_) { target_ += torque_mapper_(shaft_angle_ - cogging_offset_); }
 
           // Convert requested torque into a current request
           float requested_current = target_ / motor_.kT;
@@ -345,7 +383,7 @@ public:
           // We don't want to filter this as this is a real thing
           // Although, unless your motor had an insane pole pair count(> 500), the filters should not catch this
           if(anticog_volt_enable_){
-            filtered_ctrl_volts += get_cogging_voltage(shaft_angle_ - cogging_offset_, anticog_volt_map_);
+            filtered_ctrl_volts += volt_mapper_(shaft_angle_ - cogging_offset_);
           }
 
           // Shift all voltages by 1 to avoid setting PWM pin to 0 as it will switch to digital and cause delays
@@ -383,8 +421,9 @@ private:
 
   float filter_cutoff_freq_hz_fb_ = 500.f;
 
-  float calibration_scan_speed_ = PI;
+  float calibration_scan_speed_ = 0.125 * PI;
   float calibration_scan_distance_ = 0.25f * PI;
+  int calibration_dir_ = 1;
 
 
   /// \note: Position / State Variables
@@ -445,18 +484,21 @@ private:
   float MAX_VOLT_ = 3.f;
 
   bool anticog_enable_ = false;
-  std::vector<float> & anticog_map_;
+  std::function<float(float)> torque_mapper_ = [](float angle) -> float {return 0;};
   bool anticog_volt_enable_ = false;
-  PhaseValues<std::vector<float>> & anticog_volt_map_;
+  std::function<PhaseValues<float>(float)> volt_mapper_ = [](float angle) -> PhaseValues<float> {return {0.f, 0.f, 0.f};};
 
   bool debug_print_ = true;
 
-  void debug_print(auto msg)
+  template <typename T>
+  void debug_print(T msg)
   {
     if (!debug_print_) {return;}
     Serial.print(msg);
   }
-  void debug_println(auto msg)
+
+  template <typename T>
+  void debug_println(T msg)
   {
     if (!debug_print_) {return;}
     Serial.println(msg);
