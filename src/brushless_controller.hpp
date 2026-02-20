@@ -156,8 +156,10 @@ public:
 
   void print_calibration(){
     cs_.print_calibration();
+    Serial.print("Encoder Direction: ");
     Serial.println(pos_sensor_dir_);
-    Serial.println(encoder_offset_);
+    Serial.print("Encoder Offset: ");
+    Serial.println(encoder_offset_,6);
   }
 
   bool align_sensors(bool e_angle_align = true)
@@ -187,7 +189,7 @@ public:
     float enc_sum = 0.f;
     int steps = 0;
 
-    while(open_loop_shaft_angle_ < static_cast<float>(calibration_dir_) * calibration_scan_distance_){
+    while(static_cast<float>(calibration_dir_) * open_loop_shaft_angle_ < calibration_scan_distance_){
       update_sensors();
       enc_sum += encoder_angle.get_angle();
       steps++;
@@ -222,7 +224,7 @@ public:
     open_loop_shaft_velocity_ = 0.f;
     target_ = static_cast<float>(calibration_dir_) * -calibration_scan_speed_;
 
-    while(open_loop_shaft_angle_ > static_cast<float>(calibration_dir_) * -calibration_scan_distance_){
+    while(static_cast<float>(calibration_dir_) * open_loop_shaft_angle_ > -calibration_scan_distance_){
       update_sensors();
       enc_sum += encoder_angle.get_angle();
       steps++;
