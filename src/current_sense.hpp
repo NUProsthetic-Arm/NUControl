@@ -94,7 +94,9 @@ private:
 
     // Uh oh!
     if (fabs(offset_ - offset) > 1e-2) {
+      Serial.println(offset);
       return false;
+
     }
     return true;
 
