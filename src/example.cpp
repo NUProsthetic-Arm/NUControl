@@ -9,8 +9,8 @@ TeensyTimerTool::PeriodicTimer timer_(TeensyTimerTool::TCK);
 constexpr float CURR_GAIN = 5.f; // Amps / Volt
 constexpr int ADC_RES = 10;
 
-InlineCurrentSensor Current_Phase_B{A3, CURR_GAIN, ADC_RES};
-InlineCurrentSensor Current_Phase_C{A2, CURR_GAIN, ADC_RES};
+InlineCurrentSensor Current_Phase_B{A2, CURR_GAIN, ADC_RES};
+InlineCurrentSensor Current_Phase_C{A3, CURR_GAIN, ADC_RES};
 InlineCurrentSensorPackage Current_Sensors{{&Current_Phase_C, &Current_Phase_B}};
 
 constexpr float PWM_FREQ = 20000.f;
@@ -58,7 +58,7 @@ void setup()
   delay(1000);
 
   controller_.set_control_mode(ControllerMode::TORQUE);
-  controller_.set_target(0.03f);
+  controller_.set_target(0.01f);
 
   controller_.start_control(100,false);
   timer_.begin(update, 100);

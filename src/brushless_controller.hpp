@@ -172,7 +172,14 @@ public:
     open_loop_shaft_angle_ = 0.f;
     open_loop_shaft_velocity_ = 0.f;
 
-    auto init_ang = encoder_angle.get_full_angle();
+    float init_ang = encoder_angle.get_full_angle();
+
+    float offset_sum = 0.f;
+    float offset_pos_sum = 0.f;
+    float offset_neg_sum = 0.f;
+    int samples = 0;
+
+    Serial.println("Forward Move");
 
     // float inital_shaft_angle = shaft_angle_.get_full_angle();
     set_control_mode(ControllerMode::OPEN_LOOP_VELOCITY);
@@ -180,78 +187,94 @@ public:
     start_control(1000, false);
     while(static_cast<float>(calibration_dir_) * open_loop_shaft_angle_ < calibration_scan_distance_){
         control_step();
+        float elec_cmd = get_eangle(open_loop_shaft_angle_);
+        float elec_meas = get_eangle(static_cast<float>(calibration_dir_) * pos_sensor_dir_ * encoder_angle.get_full_angle());
+        float offset_pos = normalize_angle(elec_cmd - elec_meas);
+        float offset_neg = normalize_angle(elec_cmd + elec_meas);
+        offset_pos_sum += offset_pos;
+        offset_neg_sum += offset_neg;
+        samples++;
         delay(1);
     }
-
     stop_control();
 
-    float pos_spin_ang = encoder_angle.get_full_angle();
+    float new_ang = encoder_angle.get_full_angle();
+
+    if(new_ang > init_ang + 0.1){
+      pos_sensor_dir_ = calibration_dir_;
+      offset_sum = offset_pos_sum;
+
+
+    } else {
+      if(new_ang < init_ang - 0.1) {
+        pos_sensor_dir_ = -calibration_dir_;
+        offset_sum = offset_neg_sum;
+      }
+      else{
+        Serial.println("No motion detected. Is Encoder Working?");
+        return false;
+      }
+    }
+    Serial.print("Direction:\t");
+    Serial.println(pos_sensor_dir_);
+
+
+    Serial.println("Reverse Move");
 
     open_loop_shaft_angle_ = 0.f;
     target_ = static_cast<float>(calibration_dir_) * -calibration_scan_speed_;
     start_control(1000, false);
     while(static_cast<float>(calibration_dir_) * open_loop_shaft_angle_ > -calibration_scan_distance_){
         control_step();
+        float elec_cmd = get_eangle(open_loop_shaft_angle_);
+        float elec_meas = get_eangle(static_cast<float>(calibration_dir_) * pos_sensor_dir_ * encoder_angle.get_full_angle());
+        float offset = normalize_angle(elec_cmd - elec_meas);
+        offset_sum += offset;
+        samples++;
         delay(1);
     }
     stop_control();
 
-    float neg_spin_ang = encoder_angle.get_full_angle();
-
-    const auto displacement = fabs(init_ang - pos_spin_ang);
-
-    if (displacement < 0.05) {
-      Serial.println("Sensor did not report motion");
-      return false;
-    }
-
-    if (pos_spin_ang < neg_spin_ang) {
-      pos_sensor_dir_ *= -1;
-    }
-    Serial.print("Sensor Direction Is: ");
-    Serial.println(pos_sensor_dir_);
-
-    auto pp_check = !((fabs(displacement * motor_.pole_pairs - _2_PI_)) > 0.5);
-    if (pp_check) {
-      Serial.print("Polepairs estimated at different count: ");
-      Serial.println(static_cast<int>(_2_PI_ / displacement));
-    }
+    // auto pp_check = !((fabs(displacement * motor_.pole_pairs - _2_PI_)) > 0.5);
+    // if (pp_check) {
+    //   Serial.print("Polepairs estimated at different count: ");
+    //   Serial.println(static_cast<int>(_2_PI_ / displacement));
+    // }
 
     shaft_velocity_ = 0;
 
     // One last call to flush anything in case we flipped directions
     update_sensors();
     stop_control();
-
-    if (true) {
       // Find zero electrical angle;
 
       // Send voltage to pull the driver towards the zero electrical angle
-      // May perform worse on motors with lots of friction, cogging, or other impedances
-      driver_.enable();
-      auto phase_volts = quaddirect_to_phases<float>(
-        {motor_.phase_R * motor_.SAFE_CURRENT, 0.f},
-        1.5f * PI);
-      driver_.set_phase_voltages(center_phase_voltages(phase_volts));
-      delay(700);
-      // do{
-      //   update_sensors();
-      //   delay(10);
-      //   Serial.println(shaft_velocity_);
-      // }while(abs(shaft_velocity_) > 0.01f);
-      for (size_t i = 0; i < 500; ++i) {
-        update_sensors();
-      }
-      delay(10);
-      e_ang_offset_ = 0.f;
-      e_ang_offset_ = get_eangle(pos_sensor_dir_ * encoder_angle.get_full_angle());
-      driver_.set_phase_voltages({0.f, 0.f, 0.f});
-      delay(300);
-      driver_.disable();
+    // May perform worse on motors with lots of friction, cogging, or other impedances
+    // driver_.enable();
+    // auto phase_volts = quaddirect_to_phases<float>(
+    //   {motor_.phase_R * motor_.SAFE_CURRENT, 0.f},
+    //   1.5f * PI);
+    // driver_.set_phase_voltages(center_phase_voltages(phase_volts));
+    // delay(700);
+    // // do{
+    // //   update_sensors();
+    // //   delay(10);
+    // //   Serial.println(shaft_velocity_);
+    // // }while(abs(shaft_velocity_) > 0.01f);
+    // for (size_t i = 0; i < 500; ++i) {
+    //   update_sensors();
+    // }
+    // delay(10);
+    // e_ang_offset_ = 0.f;
+    // e_ang_offset_ = get_eangle(pos_sensor_dir_ * encoder_angle.get_full_angle());
+    // driver_.set_phase_voltages({0.f, 0.f, 0.f});
+    // delay(300);
+    // driver_.disable();
+    e_ang_offset_ = normalize_angle(offset_sum / samples);
 
-      Serial.print("Zero Electrical Angle: ");
-      Serial.println(e_ang_offset_);
-    }
+    Serial.print("Zero Electrical Angle: ");
+    Serial.println(e_ang_offset_);
+  
 
     return ret;
   }
