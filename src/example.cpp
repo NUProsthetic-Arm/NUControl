@@ -11,6 +11,8 @@ constexpr int ADC_RES = 10;
 
 InlineCurrentSensor Current_Phase_B{A2, CURR_GAIN, ADC_RES};
 InlineCurrentSensor Current_Phase_C{A3, CURR_GAIN, ADC_RES};
+// InlineCurrentSensor Current_Phase_B{A9, CURR_GAIN, ADC_RES};
+// InlineCurrentSensor Current_Phase_C{A8, CURR_GAIN, ADC_RES};
 InlineCurrentSensorPackage Current_Sensors{{&Current_Phase_C, &Current_Phase_B}};
 
 constexpr float PWM_FREQ = 20000.f;
@@ -19,13 +21,27 @@ constexpr float DRIVER_VOLTAGE = 24.f;
 
 const uint16_t EncoderReadCmd = (0b11 << 14) | 0x3FFF;
 SPIEncoder Encoder{EncoderReadCmd, SPI2, 36};
+// SPIEncoder Encoder{EncoderReadCmd, SPI1, 0};
 
 BrushlessDriver GateDriver{{33, 29, 39}, 38, PWM_FREQ, PWM_RES, DRIVER_VOLTAGE};
+// BrushlessDriver GateDriver{{3, 4, 5}, 2, PWM_FREQ, PWM_RES, DRIVER_VOLTAGE};
 
 MotorParameters U2523{7, 0.72487f, 510.f * 1e-6f, 3.f, 8.f, 0.025f, 0.001f};
 
 BrushlessController controller_{U2523, GateDriver, Current_Sensors, Encoder};
+// BrushlessController controller_{EC45_Flat, GateDriver, Current_Sensors, Encoder};
 
+// CoggingMapper<1000> mapper_(controller_);
+
+constexpr std::array<float, 1000> cogging_map = {
+  #include "anticogging_map.csv"
+};
+
+AnticoggingCompensator<1000> anticog_{cogging_map};
+
+float torque_cog(float rads){
+  return anticog_.get_cogging_torque(rads);
+}
 
 void update(){
   controller_.update_sensors();
@@ -55,12 +71,17 @@ void setup()
   }
 
   Serial.println("Preparing to run");
+  controller_.print_calibration();
   delay(1000);
 
   controller_.set_control_mode(ControllerMode::TORQUE);
-  controller_.set_target(0.01f);
+  controller_.set_velocity_filter(vel_filter_200_);
+  controller_.set_target(0.0f);
+  controller_.enable_anticog(std::function<float(float)>(torque_cog));
 
-  controller_.start_control(100,false);
+  // mapper_.map_cogging(2);
+
+  // controller_.start_control(100,false);
   timer_.begin(update, 100);
 
 }

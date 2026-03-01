@@ -23,9 +23,9 @@ struct BrushlessCalibration
   const PhaseValues<int> cs_phase_dirs{0, 0, 0};
 
   const int encoder_direction{0};
-  const float encoder_offset{0};
+  const float eangle_offset{0};
 
-  const float cogging_offset_ = 0;
+  const float cogging_offset = 0.f;
 
   // constexpr std::array<float, steps_> anticog_torque{};
   // constexpr PhaseValues<std::array<float, steps_>> anticog_volts{}; 
@@ -155,11 +155,13 @@ public:
   }
 
   void print_calibration(){
+    Serial.println("=====");
     cs_.print_calibration();
     Serial.print("Encoder Direction: ");
     Serial.println(pos_sensor_dir_);
     Serial.print("Encoder Offset: ");
-    Serial.println(encoder_offset_,6);
+    Serial.println(e_ang_offset_,6);
+    Serial.println("=====");
   }
 
   bool align_sensors()
@@ -284,14 +286,14 @@ public:
     auto ret = cs_.load_calibration(calib_.cs_phase_idx, calib_.cs_phase_dirs);
 
     set_encoder_direction(calib_.encoder_direction);
-    set_encoder_offset(calib_.encoder_offset);
+    set_eangle_offset(calib_.eangle_offset);
 
     print_calibration();
 
     return ret;
   }
 
-  float get_encoder_offset() const { return encoder_offset_; }
+  float get_eangle_offset() const { return e_ang_offset_; }
   float get_shaft_angle() const { return shaft_angle_; }
   float get_shaft_radians() const { return normalize_angle(shaft_angle_); }
   float get_encoder_angle() const { return encoder_angle.get_full_angle(); }
@@ -306,7 +308,7 @@ public:
       return;
     }
   }
-  void set_encoder_offset(float offset) { encoder_offset_ = offset; }
+  void set_eangle_offset(float offset) { e_ang_offset_ = offset; }
   void set_calibration_scan_speed(float w) { calibration_scan_speed_ = w;}
   void set_calibration_scan_range (float rads) {calibration_scan_distance_ = rads;}
   void set_calibation_direction(int dir) {
@@ -318,27 +320,27 @@ public:
       }
   }
 
-  // void enable_anticog(const std::function<float(float)> & torque_mapper)
-  // {
-  //   disable_anticog();
-  //   anticog_enable_ = true;
-  //   torque_mapper_ = torque_mapper;
-  // }
+  void enable_anticog(const std::function<float(float)> & torque_mapper)
+  {
+    disable_anticog();
+    anticog_enable_ = true;
+    torque_mapper_ = torque_mapper;
+  }
 
-  // void enable_anticog(const std::function<PhaseValues<float>(float)> & volt_mapper)
-  // {
-  //   disable_anticog();
-  //   anticog_volt_enable_ = true;
-  //   volt_mapper_ = volt_mapper;
-  // }
+  void enable_anticog(const std::function<PhaseValues<float>(float)> & volt_mapper)
+  {
+    disable_anticog();
+    anticog_volt_enable_ = true;
+    volt_mapper_ = volt_mapper;
+  }
 
-  // void disable_anticog()
-  // {
-  //   anticog_volt_enable_ = false;
-  //   anticog_enable_ = false;
-  //   torque_mapper_ = [](float angle) -> float {return 0.f;};
-  //   volt_mapper_ = [](float angle) -> PhaseValues<float> {return {0.f, 0.f, 0.f};};
-  // }
+  void disable_anticog()
+  {
+    anticog_volt_enable_ = false;
+    anticog_enable_ = false;
+    torque_mapper_ = [](float angle) -> float {return 0.f;};
+    volt_mapper_ = [](float angle) -> PhaseValues<float> {return {0.f, 0.f, 0.f};};
+  }
 
   void set_feedforward_state(bool state){ feedforward_enable_ = state; }
 
@@ -387,7 +389,7 @@ public:
       case ControllerMode::TORQUE:
         {
           // Add in cogging torque if needed 
-          // if (anticog_enable_) { target_ += torque_mapper_(shaft_angle_ - cogging_offset_); }
+          if (anticog_enable_) { target_ += torque_mapper_(shaft_angle_ - cogging_offset_); }
 
           // Convert requested torque into a current request
           float requested_current = target_ / motor_.kT;
@@ -412,9 +414,9 @@ public:
 
           // We don't want to filter this as this is a real thing
           // Although, unless your motor had an insane pole pair count(> 500), the filters should not catch this
-          // if(anticog_volt_enable_){
-          //   filtered_ctrl_volts += volt_mapper_(shaft_angle_ - cogging_offset_);
-          // }
+          if(anticog_volt_enable_){
+            filtered_ctrl_volts += volt_mapper_(shaft_angle_ - cogging_offset_);
+          }
 
           
           // Shift all voltages by 1 to avoid setting PWM pin to 0 as it will switch to digital and cause delays
@@ -453,8 +455,8 @@ private:
 
   float filter_cutoff_freq_hz_fb_ = 500.f;
 
-  float calibration_scan_speed_ = 0.125 * PI;
-  float calibration_scan_distance_ = 0.25f * PI;
+  float calibration_scan_speed_ = 0.25 * PI;
+  float calibration_scan_distance_ = 0.5f * PI;
   int calibration_dir_ = 1;
 
 
@@ -464,7 +466,7 @@ private:
   int pos_sensor_dir_ = 1;
   float shaft_angle_ = 0.f; // radians
   float shaft_velocity_ = 0.f; // rad /s
-  float encoder_offset_ = 0.f; // radians
+  // float encoder_offset_ = 0.f; // radians
   float e_ang_offset_ = 0.f;
   float electrical_angle_ = 0.f; //radians
 
@@ -516,10 +518,10 @@ private:
 
   float MAX_VOLT_ = 3.f;
 
-  // bool anticog_enable_ = false;
-  // std::function<float(float)> torque_mapper_ = [](float angle) -> float {return 0;};
-  // bool anticog_volt_enable_ = false;
-  // std::function<PhaseValues<float>(float)> volt_mapper_ = [](float angle) -> PhaseValues<float> {return {0.f, 0.f, 0.f};};
+  bool anticog_enable_ = false;
+  std::function<float(float)> torque_mapper_ = [](float angle) -> float {return 0;};
+  bool anticog_volt_enable_ = false;
+  std::function<PhaseValues<float>(float)> volt_mapper_ = [](float angle) -> PhaseValues<float> {return {0.f, 0.f, 0.f};};
 
   bool debug_print_ = true;
 
@@ -585,7 +587,7 @@ private:
 
   float get_eangle(float mech_ang) const
   {
-    return normalize_angle(static_cast<float>(motor_.pole_pairs) * (mech_ang - encoder_offset_) - e_ang_offset_);
+    return normalize_angle(static_cast<float>(motor_.pole_pairs) * (mech_ang) - e_ang_offset_);
   }
 
   PhaseValues<float> center_phase_voltages(PhaseValues<float> phase_volts) const
