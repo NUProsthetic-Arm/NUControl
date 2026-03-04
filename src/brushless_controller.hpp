@@ -147,7 +147,6 @@ public:
   {
     auto ret_d = driver_.init();
     auto ret_cs = cs_.init_sensors();
-    Serial.println(ret_d);
     set_filters(filter_cutoff_freq_hz_, filter_cutoff_freq_hz_current_, filter_cutoff_freq_hz_fb_);
 
     return ret_d & ret_cs;
@@ -168,9 +167,14 @@ public:
   {
     e_ang_offset_ = 0.f;
 
-    auto ret = cs_.align_sensors(driver_);
-
+    auto ret = cs_.align_sensors(driver_, 0.5f * motor_.phase_R * motor_.SAFE_CURRENT);
+    if(!ret){
+      Serial.println("Drivers failed to align");
+      return ret;
+    }
     delay(1000);
+    // Set inital values
+    update_sensors();
     open_loop_shaft_angle_ = 0.f;
     open_loop_shaft_velocity_ = 0.f;
 
@@ -214,6 +218,10 @@ public:
       }
       else{
         Serial.println("No motion detected. Is Encoder Working?");
+        Serial.print("Initial Angle:\t");
+        Serial.println(init_ang, 6);
+        Serial.print("Final Angle:\t");
+        Serial.println(new_ang,6);
         return false;
       }
     }
@@ -236,48 +244,14 @@ public:
         delay(1);
     }
     stop_control();
-
-    // auto pp_check = !((fabs(displacement * motor_.pole_pairs - _2_PI_)) > 0.5);
-    // if (pp_check) {
-    //   Serial.print("Polepairs estimated at different count: ");
-    //   Serial.println(static_cast<int>(_2_PI_ / displacement));
-    // }
-
     shaft_velocity_ = 0;
-
-    // One last call to flush anything in case we flipped directions
     update_sensors();
     stop_control();
-      // Find zero electrical angle;
-
-      // Send voltage to pull the driver towards the zero electrical angle
-    // May perform worse on motors with lots of friction, cogging, or other impedances
-    // driver_.enable();
-    // auto phase_volts = quaddirect_to_phases<float>(
-    //   {motor_.phase_R * motor_.SAFE_CURRENT, 0.f},
-    //   1.5f * PI);
-    // driver_.set_phase_voltages(center_phase_voltages(phase_volts));
-    // delay(700);
-    // // do{
-    // //   update_sensors();
-    // //   delay(10);
-    // //   Serial.println(shaft_velocity_);
-    // // }while(abs(shaft_velocity_) > 0.01f);
-    // for (size_t i = 0; i < 500; ++i) {
-    //   update_sensors();
-    // }
-    // delay(10);
-    // e_ang_offset_ = 0.f;
-    // e_ang_offset_ = get_eangle(pos_sensor_dir_ * encoder_angle.get_full_angle());
-    // driver_.set_phase_voltages({0.f, 0.f, 0.f});
-    // delay(300);
-    // driver_.disable();
     e_ang_offset_ = normalize_angle(offset_sum / samples);
 
     Serial.print("Zero Electrical Angle: ");
     Serial.println(e_ang_offset_);
   
-
     return ret;
   }
 
@@ -299,6 +273,7 @@ public:
   float get_encoder_angle() const { return encoder_angle.get_full_angle(); }
   float get_encoder_radians() const { return encoder_angle.get_angle(); }
   float get_shaft_velocity() const { return shaft_velocity_; }
+  MotorParameters get_motor() const {return motor_;}
 
   void set_encoder_direction(int dir) {
     if(dir == 1){ pos_sensor_dir_= 1; return;}
@@ -456,7 +431,7 @@ private:
   float filter_cutoff_freq_hz_fb_ = 500.f;
 
   float calibration_scan_speed_ = 0.25 * PI;
-  float calibration_scan_distance_ = 0.5f * PI;
+  float calibration_scan_distance_ = PI;
   int calibration_dir_ = 1;
 
 
