@@ -6,6 +6,7 @@
 #include "pos_controller.hpp"
 #include "sinusoids.hpp"
 #include "steps.hpp"
+#include "swing_traj.hpp"
 
 TeensyTimerTool::PeriodicTimer timer_(TeensyTimerTool::TCK);
 TeensyTimerTool::PeriodicTimer position_control_timer_(TeensyTimerTool::TCK);
@@ -28,17 +29,18 @@ SPIEncoder Encoder{EncoderReadCmd, SPI, 10};
 
 BrushlessController controller_{GL40, GateDriver, Current_Sensors, Encoder};
 
-PositionController p_controller_{25.0, 1.0, 0.1}; // sinusoid 1hz
-// PositionController p_controller_{17.0, 0.0, 0.0}; // step function
+PositionController p_controller_{25.0, 0.0, 0.0, 0.0}; // trajectory_05walk
 
 auto count = 0;
-
+auto freq_count = 0;
+auto freq_scale = 1;
 double target;
-double target_angle = 0.0;
-double system_angle = 0.0;
+auto target_angle = 0.0;
+auto next_angle = 0.0;
+auto system_angle = 0.0;
 std::vector<float> trajectory;
 
-bool splitter = false;
+auto splitter = false;
 
 
 
@@ -48,27 +50,28 @@ void trajectory_control_loop()
 {
   controller_.update_sensors();
 
-  if (count >= int(trajectory.size()))
+  if (count > int(trajectory.size())-1)
   {
     count = 0;
   }
 
   // pump position controller
   target_angle = trajectory.at(count);
-  system_angle =  controller_.get_shaft_angle();
+  system_angle =  controller_.get_shaft_angle(); 
   target = p_controller_.pump_controller(target_angle, system_angle, controller_.get_shaft_velocity());
-  controller_.set_target(target);
 
+  controller_.set_target(target);
   controller_.update_control();
 
-  // if (splitter){
-  //   count++;
-  //   splitter = false;
-  // }
-  // else
-  // {
-  //   splitter = true;
-  // }
+  // scale down based on input freq
+  if (freq_count > freq_scale){
+    freq_count = 0;
+    count++;
+  }
+  else
+  {
+    freq_count++;
+  }
 
   count++;
 }
@@ -90,14 +93,14 @@ void point_control_loop()
 
 void print_loop()
 {
-  sprintf(msg,">setpoint: %f\n>system: %f\n>error:%f\n",target_angle,system_angle, float(target_angle-system_angle));
+  sprintf(msg,">setpoint: %f\n>system: %f\n>error:%f\n>i_target:%f\n",target_angle, system_angle, float(target_angle-system_angle), target);
   Serial.println(msg);
 
 }
 
 void setup()
 {
-  // while (!Serial) {}
+  while (!Serial) {}
 
   TeensyTimerTool::attachErrFunc(timer_errors);
   analogReadAveraging(1);
@@ -120,14 +123,15 @@ void setup()
   Serial.println("Preparing to run");
   delay(1000);
   // controller_.set_feedforward_state(true);
-  // controller_.set_feedback_state(false);
-  // controller_.set_back_emf_comp_state(false);
+  controller_.set_feedback_state(false);
+  controller_.set_back_emf_comp_state(false);
 
   controller_.set_target(0.0f);
-
   controller_.start_control(100, false);
 
-  std::copy(sinusoid_1Hz.begin(), sinusoid_1Hz.end(), std::back_inserter(trajectory));
+  std::copy(step_at_500ms.begin(), step_at_500ms.end(), std::back_inserter(trajectory));
+
+  freq_scale = 100;
 
   position_control_timer_.begin(
     [](){
@@ -137,7 +141,7 @@ void setup()
   print_timer_.begin(
     [](){
       print_loop();
-    }, 500);
+    }, 1000);
 
 
 
