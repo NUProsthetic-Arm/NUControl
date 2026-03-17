@@ -35,11 +35,11 @@ void PositionController::set_u_clamp_val(double clamp_val)
 double PositionController::pump_controller(double setpoint, double actual, float shaft_vel)
 {
     // calculate error
-    err_ = (setpoint - actual);
+    err_ = -(setpoint - actual);
 
-    if (gvty_fwd_enable_) {gvty_term_ = std::sin(actual);}
+    if (gvty_fwd_enable_) {gvty_term_ = -std::sin(actual);}
     if (Ki_ != 0.0) {err_int_ += err_;}
-    if (Kd_ != 0.0) { err_der_ = -(shaft_vel);} 
+    if (Kd_ != 0.0) {err_der_ = (shaft_vel);} 
     
     err_prev_ = err_;
 
