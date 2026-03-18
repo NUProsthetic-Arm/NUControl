@@ -2,14 +2,16 @@
 #include <TeensyTimerTool.h>
 #include <vector>
 #include <math.h>
+#include <functional>
 #include "nu_control.hpp"
 #include "pos_controller.hpp"
 #include "step_detection.hpp"
 #include "lsm6dsv.hpp"
 
 // trajectory headers
-#include "steps.hpp"
-#include "swing_traj_11.hpp"
+// #include "steps.hpp"
+// #include "swing_traj_11.hpp"
+#include "swing_traj_segments.hpp"
 
 TeensyTimerTool::PeriodicTimer current_control_timer_(TeensyTimerTool::TCK);
 TeensyTimerTool::PeriodicTimer command_update_timer_(TeensyTimerTool::TCK);
@@ -54,21 +56,47 @@ volatile auto system_angle = 0.0;
 volatile auto system_vel = 0.0;
 auto offset = 2.963;
 
-std::vector<float> trajectory;
+auto controller_enabler = false;
 
-void current_control_loop(){
+std::vector<float> * trajectory;
+std::vector<float> trajectory_05;
+std::vector<float> trajectory_07;
+std::vector<float> trajectory_09;
+std::vector<float> trajectory_11;
+std::vector<float> trajectory_13;
+std::vector<float> trajectory_15;
+std::vector<float> zero_trajectory (50, 0);
+std::vector<float> cadence_boundaries = {1.0, 1.3, 1.55, 1.7, 1.9, 2.1, 2.5};
+std::vector<std::vector<float>*> trajectory_options = {&trajectory_05, &trajectory_07, &trajectory_09, &trajectory_11, &trajectory_13, &trajectory_15};
+
+void update_trajectory() {
+  for (auto i = 0; i < int(cadence_boundaries.size()); i++) {
+    if ((cadence > cadence_boundaries.at(i)) && (cadence < cadence_boundaries.at(i+1))){
+      controller_enabler = true;
+      Serial.println("HIHI");
+      trajectory = trajectory_options.at(i);
+      return;
+    }
+  }
+  // if it doesnt fit into any buckets, make it zeros
+  trajectory = &zero_trajectory; 
+  controller_enabler = false;
+}
+
+void current_control_loop() {
   controller_.update_sensors();
   controller_.update_control();
 }
 
 void command_update_loop()
 {
-  if (count > int(trajectory.size())-1)
+  if (count > int(trajectory->size())-1)
   {
     count = 0;
+    update_trajectory();
   }
 
-  target_angle = trajectory.at(count);
+  target_angle = -trajectory->at(count); // make negative to reverse direction
   system_angle =  controller_.get_shaft_angle() - offset; 
   system_vel =  controller_.get_shaft_velocity();
 
@@ -77,7 +105,12 @@ void command_update_loop()
 
 void position_control_loop()
 {
-  target = p_controller_.pump_controller(target_angle, system_angle, system_vel);
+  if (controller_enabler){
+    target = p_controller_.pump_controller(target_angle, system_angle, system_vel);
+  } else {
+    target = 0.0;
+  }
+
   controller_.set_target(target);
 }
 
@@ -124,8 +157,14 @@ void setup()
 
   imu.init();
 
-  // std::copy(step_at_500ms.begin(), step_at_500ms.end(), std::back_inserter(trajectory)); 
-  std::copy(trajectory_traj_11.begin(), trajectory_traj_11.end(), std::back_inserter(trajectory)); 
+  std::copy(trajectory_traj_segment_traj_05_swing_47.begin(), trajectory_traj_segment_traj_05_swing_47.end(), std::back_inserter(trajectory_05)); 
+  std::copy(trajectory_traj_segment_traj_07_swing_6.begin(), trajectory_traj_segment_traj_07_swing_6.end(), std::back_inserter(trajectory_07)); 
+  std::copy(trajectory_traj_segment_traj_09_swing_1.begin(), trajectory_traj_segment_traj_09_swing_1.end(), std::back_inserter(trajectory_09)); 
+  std::copy(trajectory_traj_segment_traj_11_swing_70.begin(), trajectory_traj_segment_traj_11_swing_70.end(), std::back_inserter(trajectory_11)); 
+  std::copy(trajectory_traj_segment_traj_13_swing_27.begin(), trajectory_traj_segment_traj_13_swing_27.end(), std::back_inserter(trajectory_13)); 
+  std::copy(trajectory_traj_segment_traj_15_swing_15.begin(), trajectory_traj_segment_traj_15_swing_15.end(), std::back_inserter(trajectory_15)); 
+
+  trajectory = &zero_trajectory;
 
   p_controller_.set_ffwd_control(true);
 
