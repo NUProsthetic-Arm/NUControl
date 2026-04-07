@@ -5,13 +5,13 @@
 #include <functional>
 #include "nu_control.hpp"
 #include "pos_controller.hpp"
-#include "step_detection.hpp"
+#include "heel_strike_filtering.hpp"
 #include "lsm6dsv.hpp"
 
 // trajectory headers
 // #include "steps.hpp"
 // #include "swing_traj_11.hpp"
-#include "swing_traj_segments.hpp"
+#include "swing_lut.hpp"
 
 TeensyTimerTool::PeriodicTimer current_control_timer_(TeensyTimerTool::TCK);
 TeensyTimerTool::PeriodicTimer command_update_timer_(TeensyTimerTool::TCK);

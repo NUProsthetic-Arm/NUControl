@@ -1,5 +1,5 @@
-#ifndef STEP_DETECTION_HPP
-#define STEP_DETECTION_HPP
+#ifndef HEEL_STRIKE_FILTERING_HPP
+#define HEEL_STRIKE_FILTERING_HPP
 #include <vector>
 #include <numeric>
 #include <cmath>
