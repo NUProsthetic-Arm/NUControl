@@ -44,7 +44,7 @@ PositionController p_controller_{13.0, 0.03, 0.35, 1.4};
 
 // IMU and step detection initialization
 LSM6DSV_IMU imu;
-StepDetector step_detector(15, 1.336, 0.2, 1000);
+HeelStrikeFilter heel_strike_filter(15, 1.336, 0.2, 1000);
 
 // init global vars
 auto imu_data = accelerations{0.0, 0.0, 0.0};
@@ -117,8 +117,8 @@ void position_control_loop()
 void imu_loop()
 { 
   imu_data = imu.get_acc();
-  step_detector.filter_update(imu_data);
-  cadence = step_detector.get_cadence();
+  heel_strike_filter.filter_update(imu_data);
+  cadence = heel_strike_filter.get_cadence();
 }
 
 void print_loop()
