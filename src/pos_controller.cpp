@@ -9,7 +9,7 @@ PositionController::PositionController(double Kp, double Ki, double Kd, double K
   err_int_ (0.0),
   err_der_ (0.0),
   err_prev_ (0.0),
-  i_clamp_val_ (10.0),
+  i_clamp_val_ (100.0),
   u_clamp_val_ (1000.0),
   gvty_fwd_enable_ (false),
   gvty_term_ (0.0)

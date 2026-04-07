@@ -72,7 +72,7 @@ void StepDetector::update_cadence()
   if (count_since_step_> frequency_ * reset_period_) {
     cadence_ = 0.0;
   }
-  // update count_since_step accordinly
+  // update count_since_step accordingly
   if (result_) {
     // enforce refactory period for step detection
     if (count_since_step_ > frequency_ * refractory_period_) {

@@ -39,7 +39,8 @@ BrushlessDriver GateDriver{{6, 5, 4}, 3, PWM_FREQ, PWM_RES, DRIVER_VOLTAGE};
 BrushlessController controller_{GL40, GateDriver, Current_Sensors, Encoder};
 
 // PositionController p_controller_{0.0, 0.0, 0.0, 1.0};
-PositionController p_controller_{10.0, 0.01, 0.35, 1.4};
+// PositionController p_controller_{10.0, 0.01, 0.35, 1.4};
+PositionController p_controller_{13.0, 0.03, 0.35, 1.4};
 
 // IMU and step detection initialization
 LSM6DSV_IMU imu;
@@ -54,7 +55,7 @@ volatile auto target_angle = 0.0;
 volatile auto next_angle = 0.0;
 volatile auto system_angle = 0.0;
 volatile auto system_vel = 0.0;
-auto offset = 2.963;
+auto offset = 1.5;
 
 auto controller_enabler = false;
 
@@ -73,13 +74,12 @@ void update_trajectory() {
   for (auto i = 0; i < int(cadence_boundaries.size()); i++) {
     if ((cadence > cadence_boundaries.at(i)) && (cadence < cadence_boundaries.at(i+1))){
       controller_enabler = true;
-      Serial.println("HIHI");
       trajectory = trajectory_options.at(i);
       return;
     }
   }
   // if it doesnt fit into any buckets, make it zeros
-  trajectory = &zero_trajectory; 
+  // trajectory = &zero_trajectory; 
   controller_enabler = false;
 }
 
@@ -96,7 +96,7 @@ void command_update_loop()
     update_trajectory();
   }
 
-  target_angle = -trajectory->at(count); // make negative to reverse direction
+  target_angle = trajectory->at(count); // make negative to reverse direction
   system_angle =  controller_.get_shaft_angle() - offset; 
   system_vel =  controller_.get_shaft_velocity();
 
@@ -179,7 +179,7 @@ void setup()
   }
 
   Serial.println("Aligning");
-  controller_.set_calibration_scan_range(0.2617994); // 15 degrees
+  // controller_.set_calibration_scan_range(0.2617994); // 15 degrees
   // controller_.set_calibration_scan_speed(0.1);
   
   if (!controller_.align_sensors()) {
