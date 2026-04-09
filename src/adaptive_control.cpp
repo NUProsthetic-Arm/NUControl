@@ -13,6 +13,8 @@
 // #include "swing_traj_11.hpp"
 #include "swing_lut.hpp"
 
+#define PROSTHESIS_SIDE Classification::LEFT
+
 TeensyTimerTool::PeriodicTimer current_control_timer_(TeensyTimerTool::TCK);
 TeensyTimerTool::PeriodicTimer command_update_timer_(TeensyTimerTool::TCK);
 TeensyTimerTool::PeriodicTimer position_control_timer_(TeensyTimerTool::TCK);
@@ -40,87 +42,169 @@ BrushlessController controller_{GL40, GateDriver, Current_Sensors, Encoder};
 
 // PositionController p_controller_{0.0, 0.0, 0.0, 1.0};
 // PositionController p_controller_{10.0, 0.01, 0.35, 1.4};
-PositionController p_controller_{13.0, 0.03, 0.35, 1.4};
+PositionController p_controller_{13.0f, 0.03f, 0.35f, 1.4f};
 
 // IMU and step detection initialization
 LSM6DSV_IMU imu;
-HeelStrikeFilter heel_strike_filter(15, 1.336, 0.2, 1000);
+HeelStrikeFilter heel_strike_filter(15, 1.336f, 0.2f, 1000);
 
 // init global vars
-auto imu_data = accelerations{0.0, 0.0, 0.0};
-volatile auto cadence = 0.0;
+auto imu_data = accelerations{0.0f, 0.0f, 0.0f};
+auto heel_strike_result = HeelStrikeResult{0, Classification::UNKNOWN, 0.0f};
+auto prev_heel_strike_result = HeelStrikeResult{0, Classification::UNKNOWN, 0.0f};
+auto ideal_side_state = Classification::UNKNOWN;
+auto rt_side_state = Classification::UNKNOWN;
 volatile auto count = 0;
-volatile auto target = 0.0;
-volatile auto target_angle = 0.0;
-volatile auto next_angle = 0.0;
-volatile auto system_angle = 0.0;
-volatile auto system_vel = 0.0;
-auto offset = 1.5;
-
+volatile auto target = 0.0f;
+volatile auto target_angle = 0.0f;
+volatile auto next_angle = 0.0f;
+volatile auto system_angle = 0.0f;
+volatile auto system_vel = 0.0f;
+volatile auto alpha = 1.0f;
+auto offset = 1.5f;
+SwingEntry trajectory;
+SwingEntry prev_trajectory;
 auto controller_enabler = false;
 
-std::vector<float> * trajectory;
-std::vector<float> trajectory_05;
-std::vector<float> trajectory_07;
-std::vector<float> trajectory_09;
-std::vector<float> trajectory_11;
-std::vector<float> trajectory_13;
-std::vector<float> trajectory_15;
-std::vector<float> zero_trajectory (50, 0);
-std::vector<float> cadence_boundaries = {1.0, 1.3, 1.55, 1.7, 1.9, 2.1, 2.5};
-std::vector<std::vector<float>*> trajectory_options = {&trajectory_05, &trajectory_07, &trajectory_09, &trajectory_11, &trajectory_13, &trajectory_15};
+void system_state_update() {
+  // check if controller should be enabled
+  if (!controller_enabler && heel_strike_result.confidence == 5) {
+    // if control is disabled, and confidence reaches 5 turn it on!
+    controller_enabler = true;
 
-void update_trajectory() {
-  for (auto i = 0; i < int(cadence_boundaries.size()); i++) {
-    if ((cadence > cadence_boundaries.at(i)) && (cadence < cadence_boundaries.at(i+1))){
-      controller_enabler = true;
-      trajectory = trajectory_options.at(i);
-      return;
+    // save this expectation internally, this will be the running assumption
+    ideal_side_state = heel_strike_result.classification;
+    rt_side_state = ideal_side_state;
+    // start trajectory from beginning
+    count = 0;
+  }
+  else if (controller_enabler && heel_strike_result.confidence == 0) {
+    // if control is enabled, and confidence reaches 0 turn it off!
+    controller_enabler = false;
+  }  
+  
+  // check if there has been a heel strike
+  if (heel_strike_result.count != prev_heel_strike_result.count) {
+    // update prev_trajectory for smoothing
+    prev_trajectory = trajectory;
+
+    // load in new trajectory
+    trajectory = swing_lut_lookup(heel_strike_result.period + prev_heel_strike_result.period);
+  
+    // update prev_period to check for new heel strike
+    prev_heel_strike_result = heel_strike_result;
+
+    // update the trajectory in use
+    if (controller_enabler) {
+      // if heel strike occured before trajectory finished, flip both to match
+      if (ideal_side_state == rt_side_state) {
+        if (PROSTHESIS_SIDE == ideal_side_state) {
+          // if heel strike was on same side as prosthesis, use fwd trajectory
+          rt_side_state = PROSTHESIS_SIDE;
+        } else {
+          // if opposite, use bwd trajectory
+          rt_side_state = flip_expectation(PROSTHESIS_SIDE);
+        }
+      }      
+      // flip ideal expectation in both cases
+      ideal_side_state = flip_expectation(ideal_side_state);
+
+      // reset blend term to deal with changed trajectories
+      alpha = 0.1;
     }
   }
-  // if it doesnt fit into any buckets, make it zeros
-  // trajectory = &zero_trajectory; 
-  controller_enabler = false;
 }
 
+// NUControl update loop
 void current_control_loop() {
   controller_.update_sensors();
   controller_.update_control();
 }
 
+// Update the commanded position loop
 void command_update_loop()
 {
-  if (count > int(trajectory->size())-1)
-  {
-    count = 0;
-    update_trajectory();
-  }
+  // check if control is enabled 
+  if (controller_enabler) {
+    // use fwd if classification state is same side, and vice versa
+    if (rt_side_state == PROSTHESIS_SIDE) {
+      // check if trajectory has been completed, if so proceed to back half
+      if (count >= int(trajectory.fwd_len)) {
+        // flip rt state
+        rt_side_state = flip_expectation(rt_side_state);
 
-  target_angle = trajectory->at(count); // make negative to reverse direction
+        // reset count
+        count = 0;
+
+        // set target angle from bwd
+        target_angle = (1 - alpha) * prev_trajectory.bck[count] + alpha * trajectory.bck[count];
+      } else if (count < int(prev_trajectory.fwd_len)) {
+        target_angle = (1 - alpha) * prev_trajectory.fwd[count] + alpha * trajectory.fwd[count];
+      } else {
+        target_angle =  trajectory.fwd[count];
+      }
+    } else {
+      // check if trajectory has been completed, if so proceed to front half
+      if (count >= int(trajectory.bck_len)) {
+        // flip rt state
+        rt_side_state = flip_expectation(rt_side_state);
+
+        // reset count
+        count = 0;
+
+        // set target angle from fwd
+        target_angle = (1 - alpha) * prev_trajectory.fwd[count] + alpha * trajectory.fwd[count];
+      } else if (count < int(prev_trajectory.bck_len)) {
+        target_angle = (1 - alpha) * prev_trajectory.bck[count] + alpha * trajectory.bck[count];
+      } else {
+        target_angle =  trajectory.bck[count];
+      }
+    }
+    // increment
+    count++;
+
+    // handle alpha
+    if (alpha < 1.0f) {
+      // increment alpha such that it reaches 1.0 a quarter way through the trajectory
+      alpha += 0.25f / (trajectory.fwd_len + trajectory.bck_len);  
+    }
+  }
+  // apply offset and get shaft angle and velocity
   system_angle =  controller_.get_shaft_angle() - offset; 
   system_vel =  controller_.get_shaft_velocity();
 
-  count++;
 }
 
+// position controller loop
 void position_control_loop()
 {
+  // check if control is enabled
   if (controller_enabler){
+    // pump position PID controller
     target = p_controller_.pump_controller(target_angle, system_angle, system_vel);
   } else {
-    target = 0.0;
+    // set target torque as 0.0 if controller is off
+    target = 0.0f;
   }
 
+  // send command to NUControl
   controller_.set_target(target);
 }
 
+// imu and step detection loop
 void imu_loop()
 { 
+  // collect imu data
   imu_data = imu.get_acc();
+
+  // update heel strike filter
   heel_strike_filter.filter_update(imu_data);
-  cadence = heel_strike_filter.get_cadence();
+
+  // get most recent results
+  heel_strike_result = heel_strike_filter.get_result();
 }
 
+// printing loop
 void print_loop()
 {
   Serial.print(">setpoint:");
@@ -147,8 +231,11 @@ void print_loop()
   Serial.print(">az:");
   Serial.println(imu_data.z, 3);
 
-  Serial.print(">cadence:");
-  Serial.println(cadence);
+  Serial.print(">period:");
+  Serial.println(heel_strike_result.period);
+
+  Serial.print(">classification:");
+  Serial.println(static_cast<int>(heel_strike_result.classification));
 }
 
 void setup()
@@ -156,15 +243,6 @@ void setup()
   while (!Serial) {}
 
   imu.init();
-
-  std::copy(trajectory_traj_segment_traj_05_swing_47.begin(), trajectory_traj_segment_traj_05_swing_47.end(), std::back_inserter(trajectory_05)); 
-  std::copy(trajectory_traj_segment_traj_07_swing_6.begin(), trajectory_traj_segment_traj_07_swing_6.end(), std::back_inserter(trajectory_07)); 
-  std::copy(trajectory_traj_segment_traj_09_swing_1.begin(), trajectory_traj_segment_traj_09_swing_1.end(), std::back_inserter(trajectory_09)); 
-  std::copy(trajectory_traj_segment_traj_11_swing_70.begin(), trajectory_traj_segment_traj_11_swing_70.end(), std::back_inserter(trajectory_11)); 
-  std::copy(trajectory_traj_segment_traj_13_swing_27.begin(), trajectory_traj_segment_traj_13_swing_27.end(), std::back_inserter(trajectory_13)); 
-  std::copy(trajectory_traj_segment_traj_15_swing_15.begin(), trajectory_traj_segment_traj_15_swing_15.end(), std::back_inserter(trajectory_15)); 
-
-  trajectory = &zero_trajectory;
 
   p_controller_.set_ffwd_control(true);
 
@@ -179,8 +257,11 @@ void setup()
   }
 
   Serial.println("Aligning");
-  // controller_.set_calibration_scan_range(0.2617994); // 15 degrees
-  // controller_.set_calibration_scan_speed(0.1);
+  controller_.set_calibration_scan_range(0.5); // 15 degrees
+  controller_.set_calibration_scan_speed(0.1);
+
+  // auto calib = BrushlessCalibration{};
+  // controller_.load_calibration();
   
   if (!controller_.align_sensors()) {
     Serial.println("Motor controller component failed to align");
@@ -202,7 +283,7 @@ void setup()
 
   controller_.start_control(100, false);
 
-  // begin timers, rate in us
+  // begin timers, rate in micro-seconds
   current_control_timer_.begin(current_control_loop, 100);
   command_update_timer_.begin(command_update_loop, 10000);
   position_control_timer_.begin(position_control_loop, 1000);

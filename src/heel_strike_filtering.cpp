@@ -1,6 +1,6 @@
-#include <step_detection.hpp>
+#include <heel_strike_filtering.hpp>
 
-HeelStrikeFilter::HeelStrikeFilter(int window_size, double threshold, double refractory_period, int frequency)
+HeelStrikeFilter::HeelStrikeFilter(int window_size, float threshold, float refractory_period, int frequency)
 : window_size_ (window_size),
   threshold_ (threshold),
   refractory_period_ (refractory_period),
@@ -9,15 +9,17 @@ HeelStrikeFilter::HeelStrikeFilter(int window_size, double threshold, double ref
   data_points_ (0),
   head_ (0),
   result_ (false),
-  cadence_ (0.0),
-  hs_classification_ (0),
-  prev_mav_ (0.0),
-  curr_mav_ (0.0),
-  next_mav_ (0.0),
-  l_mu_ (-0.003059),
-  r_mu_ (0.101622),
-  l_sigma_ (0.029304),
-  r_sigma_ (0.031433)
+  period_ (0.0f),
+  hs_classification_ (Classification::UNKNOWN),
+  prev_mav_ (0.0f),
+  curr_mav_ (0.0f),
+  next_mav_ (0.0f),
+  l_mu_ (-0.003059f),
+  r_mu_ (0.101622f),
+  l_sigma_ (0.029304f),
+  r_sigma_ (0.031433f),
+  expectation_ (Classification::LEFT),
+  confidence_ (0)
 {
   // resize buffers to set correct length and fill with zeros
   mag_buffer_.resize(window_size_);
@@ -52,23 +54,18 @@ void HeelStrikeFilter::filter_update(accelerations acc)
     // classify if step detected
     if (result_) {
       classify_step();
+      update_confidence();
     }
   }  
 
-  // update cadence
-  update_cadence();
+  // update period
+  update_period();
 }
 
-double HeelStrikeFilter::get_cadence()
+const HeelStrikeResult HeelStrikeFilter::get_result()
 {
-  return cadence_;
+  return HeelStrikeResult{heel_strike_count_, hs_classification_, period_, confidence_};
 }
-
-int HeelStrikeFilter::get_classification()
-{
-  return hs_classification_;
-}
-
 
 bool HeelStrikeFilter::detect_steps()
 {
@@ -84,17 +81,53 @@ bool HeelStrikeFilter::detect_steps()
   return false;
 }
 
-void HeelStrikeFilter::update_cadence()
+// update the confidence in our classifications
+void HeelStrikeFilter::update_confidence() {
+  if (expectation_ == hs_classification_) {
+    if (confidence_ > 1) {
+      // extra reward for successive correct expectations
+      confidence_++;
+    }
+    // if expectation aligns with result, increment confidence
+    confidence_++;
+
+    // flip expectation
+    expectation_ = flip_expectation(expectation_);
+  } else {
+    if (hs_classification_ == Classification::UNKNOWN){
+      // if heel strike result is unknown, decrement by 1
+      confidence_--;
+    } else {
+      // if heel strike result is OPPOSITE, decrement by 2
+      confidence_-=2;
+    }
+
+    if (confidence_ > 0) {
+      // if we still have some confidence left, flip expectation. otherwise don't because we might be wrong at this point
+      expectation_ = flip_expectation(expectation_);
+    }
+  }
+
+  // clamp value of confidence
+  if (confidence_ < 0) {
+    confidence_ = 0;
+  } else if (confidence_ > 5) {
+    confidence_ = 5;
+  }
+}
+
+void HeelStrikeFilter::update_period()
 {
   // check for timeout on cadence
   if (count_since_step_> frequency_ * reset_period_) {
-    cadence_ = 0.0;
+    period_ = 0.0f;
+    confidence_ = 0;
   }
   // update count_since_step accordingly
   if (result_) {
     // enforce refactory period for step detection
     if (count_since_step_ > frequency_ * refractory_period_) {
-        cadence_ = double(frequency_) / double(count_since_step_);
+        period_ = float(count_since_step_) / float(frequency_);
         count_since_step_ = 0;
     } else {
         // increment since we aren't counting this step
@@ -114,40 +147,39 @@ void HeelStrikeFilter::classify_step()
   auto data_point = get_mav_result();
 
   // get likelyhood from gaussian pdf
-  auto likelyhood_R = gaussian_pdf(data_point, r_mu_, r_sigma_)
-  auto likelyhood_L = gaussian_pdf(data_point, l_mu_, l_sigma_)
+  auto likelyhood_R = gaussian_pdf(data_point, r_mu_, r_sigma_);
+  auto likelyhood_L = gaussian_pdf(data_point, l_mu_, l_sigma_);
 
   // calculate likelyhood ratio
   auto likelyhood_ratio = likelyhood_R/likelyhood_L;
 
   // classify based on result
-  if (likelyhood_ratio > 2.0) {
-    hs_classification_ = 1;
+  if (likelyhood_ratio > 2.0f) {
+    hs_classification_ = Classification::RIGHT;
   }
-  else if (likelyhood_ratio < 0.5) {
-    hs_classification_ = -1;
+  else if (likelyhood_ratio < 0.5f) {
+    hs_classification_ = Classification::LEFT;
   } else {
-    hs_classification_ = 0;
+    hs_classification_ = Classification::UNKNOWN;
   }
 }
 
-
-double HeelStrikeFilter::mag(accelerations acc)
+float HeelStrikeFilter::mag(accelerations acc)
 {
   return std::sqrt(std::pow(acc.x, 2) + std::pow(acc.y, 2) + std::pow(acc.z, 2));
 }
 
-double HeelStrikeFilter::anterio_posterior_acc(accelerations acc)
+float HeelStrikeFilter::anterio_posterior_acc(accelerations acc)
 {
   return acc.x * std::sin(65) + acc.y * std::sin(65);
 }
 
-double HeelStrikeFilter::gaussian_pdf(double dp, double mu, double sigma)
+float HeelStrikeFilter::gaussian_pdf(float dp, float mu, float sigma)
 {
-  return std::exp(-0.5 * std::pow((x - mu) / sigma, 2)) / (sigma * std::sqrt(2.0 * M_PI));
+  return std::exp(-0.5 * std::pow((dp - mu) / sigma, 2)) / (sigma * std::sqrt(2.0 * M_PI));
 }
 
-double HeelStrikeFilter::get_mav_result()
+float HeelStrikeFilter::get_mav_result()
 {
-  return std::accumulate(mag_buffer_.begin(), mag_buffer_.end(), 0.0) / double(mag_buffer_.size());
+  return std::accumulate(mag_buffer_.begin(), mag_buffer_.end(), 0.0) / float(mag_buffer_.size());
 }

@@ -1,18 +1,18 @@
 #include "pos_controller.hpp"
 
-PositionController::PositionController(double Kp, double Ki, double Kd, double Kff)
+PositionController::PositionController(float Kp, float Ki, float Kd, float Kff)
 : Kp_(Kp),
   Ki_(Ki),
   Kd_(Kd),
   Kff_(Kff),
-  err_ (0.0),
-  err_int_ (0.0),
-  err_der_ (0.0),
-  err_prev_ (0.0),
-  i_clamp_val_ (100.0),
-  u_clamp_val_ (1000.0),
+  err_ (0.0f),
+  err_int_ (0.0f),
+  err_der_ (0.0f),
+  err_prev_ (0.0f),
+  i_clamp_val_ (100.0f),
+  u_clamp_val_ (1000.0f),
   gvty_fwd_enable_ (false),
-  gvty_term_ (0.0)
+  gvty_term_ (0.0f)
 {
     Serial.println("Initializing PID position controller...");
 }
@@ -22,17 +22,17 @@ void PositionController::set_ffwd_control(bool enable)
     gvty_fwd_enable_ = enable;
 }
 
-void PositionController::set_i_clamp_val(double clamp_val)
+void PositionController::set_i_clamp_val(float clamp_val)
 {
     i_clamp_val_ = clamp_val;
 }
 
-void PositionController::set_u_clamp_val(double clamp_val)
+void PositionController::set_u_clamp_val(float clamp_val)
 {
     u_clamp_val_ = clamp_val;
 }
 
-double PositionController::pump_controller(double setpoint, double actual, float shaft_vel)
+float PositionController::pump_controller(float setpoint, float actual, float shaft_vel)
 {
     // calculate error
     err_ = -(setpoint - actual);
@@ -44,12 +44,12 @@ double PositionController::pump_controller(double setpoint, double actual, float
     err_prev_ = err_;
 
     // clamp err_int
-    if ((err_int_ > i_clamp_val_) && (Ki_ != 0.0))
+    if ((err_int_ > i_clamp_val_) && (Ki_ != 0.0f))
     {
         err_int_ = i_clamp_val_;
         Serial.println("clamping high");
     } 
-    else if ((err_int_ < -i_clamp_val_) && (Ki_ != 0.0))
+    else if ((err_int_ < -i_clamp_val_) && (Ki_ != 0.0f))
     {
         err_int_ = -i_clamp_val_;
         Serial.println("clamping low");

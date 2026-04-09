@@ -12,7 +12,7 @@
 struct accelerations
 {
   /// \brief 3 axis acceleration data
-  double x, y, z;
+  float x, y, z;
 };
 
 /// \brief Class abstraction of functions required to use LSM6DSV_IMU

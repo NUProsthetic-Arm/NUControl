@@ -3,14 +3,20 @@
 #include <cstddef>
 
 // One entry in the arm-swing lookup table.
-// fwd/bck hold 200 elbow angles in rad on a uniform phase grid [0,1].
+//
+// fwd/bck are physical-time arrays sampled at 100 Hz.
+// Array length = round(duration_s * 100), so index i → real time i / 100.0 s.
+// Angles are stored in rad.
+//
+// To play back at the correct speed, step through the array at
+// one entry per controller tick (assumed 100 Hz).
 struct SwingEntry {
     float        period_s;
-    const float* fwd;         // forward-half trajectory (rad, 200 pts)
-    std::size_t  fwd_len;
+    const float* fwd;         // forward-half trajectory (rad, 100 Hz)
+    std::size_t  fwd_len;     // number of samples = round(fwd_dur_s * HZ)
     float        fwd_dur_s;   // real-time duration of forward half
-    const float* bck;         // back-half trajectory (rad, 200 pts)
-    std::size_t  bck_len;
+    const float* bck;         // back-half trajectory (rad, 100 Hz)
+    std::size_t  bck_len;     // number of samples = round(bck_dur_s * HZ)
     float        bck_dur_s;   // real-time duration of back half
 };
 
