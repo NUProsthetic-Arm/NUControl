@@ -19,18 +19,21 @@ HeelStrikeFilter::HeelStrikeFilter(int window_size, float threshold, float refra
   l_sigma_ (0.029304f),
   r_sigma_ (0.031433f),
   expectation_ (Classification::LEFT),
-  confidence_ (0)
+  confidence_ (0),
+  sum_ (0.0),
+  prev_sum_ (0.0),
+  feature_ (0.0)
 {
   // resize buffers to set correct length and fill with zeros
   mag_buffer_.resize(window_size_);
-  antpost_buffer_.resize(window_size_);
+  mediolat_buffer_.resize(window_size_);
 }
 
 void HeelStrikeFilter::filter_update(accelerations acc)
 {
   // add the magnitude of the acc into the buffer
   mag_buffer_.at(head_) = mag(acc);
-  antpost_buffer_.at(head_) = anterio_posterior_acc(acc);
+  mediolat_buffer_.at(head_) = medio_lateral_acc(acc);
 
   // update head position
   head_ = (head_ + 1) % window_size_;
@@ -39,6 +42,9 @@ void HeelStrikeFilter::filter_update(accelerations acc)
   prev_mav_ = curr_mav_;
   curr_mav_ = next_mav_;
   next_mav_ = get_mav_result();
+
+  // integrate medio lateral
+  sum_ += get_medio_lateral_mav_result();
 
   // check if buffer is not yet filled
   if (data_points_ < window_size_) {
@@ -53,8 +59,8 @@ void HeelStrikeFilter::filter_update(accelerations acc)
 
     // classify if step detected
     if (result_) {
-      classify_step();
-      update_confidence();
+      // classify_step2();
+      // update_confidence();
     }
   }  
 
@@ -64,7 +70,7 @@ void HeelStrikeFilter::filter_update(accelerations acc)
 
 const HeelStrikeResult HeelStrikeFilter::get_result()
 {
-  return HeelStrikeResult{heel_strike_count_, hs_classification_, period_, confidence_};
+  return HeelStrikeResult{heel_strike_count_, hs_classification_, period_, confidence_, feature_};
 }
 
 bool HeelStrikeFilter::detect_steps()
@@ -122,12 +128,19 @@ void HeelStrikeFilter::update_period()
   if (count_since_step_> frequency_ * reset_period_) {
     period_ = 0.0f;
     confidence_ = 0;
+    sum_ = 0.0f;
+    prev_sum_ = 0.0f;
+    hs_classification_ = Classification::UNKNOWN;
   }
   // update count_since_step accordingly
   if (result_) {
     // enforce refactory period for step detection
     if (count_since_step_ > frequency_ * refractory_period_) {
+        // step is now confirmed, classify and update period
         period_ = float(count_since_step_) / float(frequency_);
+        classify_step2();
+        update_confidence();
+        heel_strike_count_++;
         count_since_step_ = 0;
     } else {
         // increment since we aren't counting this step
@@ -144,7 +157,7 @@ void HeelStrikeFilter::update_period()
 void HeelStrikeFilter::classify_step()
 {
   // get mav result
-  auto data_point = get_mav_result();
+  auto data_point = get_medio_lateral_mav_result();
 
   // get likelyhood from gaussian pdf
   auto likelyhood_R = gaussian_pdf(data_point, r_mu_, r_sigma_);
@@ -164,14 +177,36 @@ void HeelStrikeFilter::classify_step()
   }
 }
 
+void HeelStrikeFilter::classify_step2()
+{
+  // normalize
+  feature_ = (sum_ - prev_sum_) / count_since_step_;
+
+  // reset sum
+  prev_sum_ = sum_;
+  sum_ = 0.0f;
+
+  // classify baseed on result
+  if (feature_ > .01f) {
+    hs_classification_ = Classification::LEFT;
+  }
+  else if (feature_ < -.01f) {
+    hs_classification_ = Classification::RIGHT;
+  } else {
+    hs_classification_ = Classification::UNKNOWN;
+  }
+}
+
 float HeelStrikeFilter::mag(accelerations acc)
 {
   return std::sqrt(std::pow(acc.x, 2) + std::pow(acc.y, 2) + std::pow(acc.z, 2));
 }
 
-float HeelStrikeFilter::anterio_posterior_acc(accelerations acc)
+float HeelStrikeFilter::medio_lateral_acc(accelerations acc)
 {
-  return acc.x * std::sin(65) + acc.y * std::sin(65);
+  constexpr float s = 0.90630778703f;  // sin(65°)
+  constexpr float c = 0.42261826174f;  // cos(65°)
+  return acc.x * s + acc.y * c;
 }
 
 float HeelStrikeFilter::gaussian_pdf(float dp, float mu, float sigma)
@@ -183,3 +218,9 @@ float HeelStrikeFilter::get_mav_result()
 {
   return std::accumulate(mag_buffer_.begin(), mag_buffer_.end(), 0.0) / float(mag_buffer_.size());
 }
+
+float HeelStrikeFilter::get_medio_lateral_mav_result()
+{
+  return std::accumulate(mediolat_buffer_.begin(), mediolat_buffer_.end(), 0.0) / float(mediolat_buffer_.size());
+}
+

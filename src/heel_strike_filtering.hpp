@@ -18,6 +18,7 @@ struct HeelStrikeResult {
     Classification classification;
     float period;
     int confidence;
+    float sum;
 };
 
 /// \brief Flip the expected value of the classification
@@ -30,6 +31,9 @@ static Classification flip_expectation(Classification expectation)
   }
   else if (expectation == Classification::LEFT) {
     return Classification::RIGHT;
+  } else {
+    // not sure if this should be the case
+    return Classification::UNKNOWN;
   }
 }
 
@@ -43,7 +47,7 @@ public:
 /// \param threshold - The IMU threshold for step detection
 /// \param refractory_period - The minimum time in seconds that steps must be apart
 /// \param frequency - The frequency at which this class is updated in Hz
-HeelStrikeFilter(int window_size, float theshold, float refractory_period = 0.2, int frequency = 100);
+HeelStrikeFilter(int window_size, float theshold, float refractory_period = 0.4, int frequency = 100);
 
 /// \brief Update the moving average filter
 /// \param acc - The new accelerations to add in to moving average window
@@ -53,6 +57,14 @@ void filter_update(accelerations acc);
 /// \note A classification of 1 indiciates right, -1 idicates left, 0 indicates uncertainty
 /// \return A HeelStrikeResult struct containing the count of steps, period, and classification of most recent heel strikes
 const HeelStrikeResult get_result();
+
+/// \brief Calculate the moving average from acc buffer
+/// \returns The moving average filter output
+float get_mav_result();
+
+/// \brief Calculate the moving average from medio_lateral_acc buffer
+/// \returns The moving average filter output
+float get_medio_lateral_mav_result();
 
 private:
 /// \brief Update the confidence in our alternating assumption of heel strike classification
@@ -70,19 +82,18 @@ void update_period();
 /// \brief Calculates likelyhood ratio of right heel strike by sampling from distributions of right and left anterio-posterior accelerations
 void classify_step();
 
+/// \brief Calculates likelyhood ratio of right heel strike by sampling from distributions of right and left anterio-posterior accelerations
+void classify_step2();
+
 /// \brief Calculate the magnitude of an acceleration signal
 float mag(accelerations acc);
 
-/// \brief Calculate the anterio-posterior (front to back) of an acceleration signal with embedded rotation from IMU position
-float anterio_posterior_acc(accelerations acc);
+/// \brief Calculate the medio-lateral (left to right) of an acceleration signal with embedded rotation from IMU position
+float medio_lateral_acc(accelerations acc);
 
 /// \brief Calculates likelyhood of a data point from a gaussian distribution with specified mean and standard deviation
 /// \returns The likelyhood of the point occuring in the given distribution
 float gaussian_pdf(float dp, float u, float stdv);
-
-/// \brief Calculate the moving average from acc buffer
-/// \returns The moving average filter output
-float get_mav_result();
 
 /// \brief The size of the moving average window
 int window_size_;
@@ -106,8 +117,8 @@ float period_;
 Classification hs_classification_;
 /// \brief The buffer of size window_size_ that holds all the acc_mag results to be used in the mav filter
 std::vector<float> mag_buffer_;
-/// \brief The buffer of size window_size_ that holds all the anterio_posterior_acc results to be used in the mav filter
-std::vector<float> antpost_buffer_;
+/// \brief The buffer of size window_size_ that holds all the medio_lateral_acc results to be used in the mav filter
+std::vector<float> mediolat_buffer_;
 /// \brief The previous, current, and next mav result
 float prev_mav_, curr_mav_, next_mav_;
 /// \brief The parameters describing the distributions of anterio-posterior accelerations for right and left heel strikes
@@ -118,7 +129,12 @@ int heel_strike_count_;
 Classification expectation_;
 /// \brief The count of confidence in our assumption about the classification
 int confidence_;
-
+/// \brief The sum of medio-lateral imu signal since last heel strike
+float sum_;
+/// \brief The previous sum of medio-lateral imu signal since last heel strike
+float prev_sum_;
+/// \brief The normalized difference between current and prev sum used for classification
+float feature_;
 /// \brief The size of the mav_result_buffer_
 static constexpr int step_detect_buff_size_ = 3;
 /// \brief The period in seconds for which the period is set to 0 if it exceeds this time

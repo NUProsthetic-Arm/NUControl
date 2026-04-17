@@ -1,5 +1,5 @@
 // #include "lsm6dsv.hpp"
-// #include "step_detection.hpp"
+// #include "heel_strike_filtering.hpp"
 // #include <TeensyTimerTool.h>
 
 // TeensyTimerTool::PeriodicTimer imu_timer_(TeensyTimerTool::TCK);
@@ -7,17 +7,16 @@
 
 // LSM6DSV_IMU imu;
 
-// StepDetector step_detector(15, 1.336, 0.2, 1000);
+// HeelStrikeFilter step_detector(15, 1.336, 0.2, 1000);
 
 // static auto imu_data = accelerations{0.0, 0.0, 0.0};
-// static auto step = false;
-// static auto cadence = 0.0;
+// static auto result = HeelStrikeResult{0, Classification::UNKNOWN, 0.0f};
 
 // void imu_loop()
 // {
 //   imu_data = imu.get_acc();
 //   step_detector.filter_update(imu_data);
-//   cadence = step_detector.get_cadence();
+//   result = step_detector.get_result();
 // }
 
 // void print_loop()
@@ -31,8 +30,18 @@
 //   Serial.print(">az:");
 //   Serial.println(imu_data.z, 3);
 
-//   Serial.print(">cadence:");
-//   Serial.println(cadence);
+//   Serial.print(">period:");
+//   Serial.println(result.period);
+
+//   Serial.print(">classification:");
+//   Serial.println(static_cast<int>(result.classification));
+
+//   Serial.print(">count:");
+//   Serial.println(static_cast<int>(result.count));
+  
+//   Serial.print(">confidence:");
+//   Serial.println(static_cast<int>(result.confidence));
+
 // }
 // void setup() 
 // {

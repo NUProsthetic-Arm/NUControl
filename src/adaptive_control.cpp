@@ -41,12 +41,17 @@ BrushlessDriver GateDriver{{6, 5, 4}, 3, PWM_FREQ, PWM_RES, DRIVER_VOLTAGE};
 BrushlessController controller_{GL40, GateDriver, Current_Sensors, Encoder};
 
 // PositionController p_controller_{0.0, 0.0, 0.0, 1.0};
-// PositionController p_controller_{10.0, 0.01, 0.35, 1.4};
-PositionController p_controller_{13.0f, 0.03f, 0.35f, 1.4f};
+// PositionController p_controller_{1.0f, 0.0, 0.0, 1.0f};
+// PositionController p_controller_{15.0, 0.01, 0., 1.4};
+// PositionController p_controller_{13.0f, 0.03f, 0.35f, 1.0f};
+
+// tuning pid on michael jenz
+PositionController p_controller_{25.0, 0.0, 0.5, 1.4};
+
 
 // IMU and step detection initialization
 LSM6DSV_IMU imu;
-HeelStrikeFilter heel_strike_filter(15, 1.336f, 0.2f, 1000);
+HeelStrikeFilter heel_strike_filter(15, 1.1f, 0.4f, 1000);
 
 // init global vars
 auto imu_data = accelerations{0.0f, 0.0f, 0.0f};
@@ -61,7 +66,7 @@ volatile auto next_angle = 0.0f;
 volatile auto system_angle = 0.0f;
 volatile auto system_vel = 0.0f;
 volatile auto alpha = 1.0f;
-auto offset = 1.5f;
+auto offset = 1.4f;
 SwingEntry trajectory;
 SwingEntry prev_trajectory;
 auto controller_enabler = false;
@@ -71,6 +76,7 @@ void system_state_update() {
   if (!controller_enabler && heel_strike_result.confidence == 5) {
     // if control is disabled, and confidence reaches 5 turn it on!
     controller_enabler = true;
+    p_controller_.set_ffwd_control(true);
 
     // save this expectation internally, this will be the running assumption
     ideal_side_state = heel_strike_result.classification;
@@ -81,6 +87,10 @@ void system_state_update() {
   else if (controller_enabler && heel_strike_result.confidence == 0) {
     // if control is enabled, and confidence reaches 0 turn it off!
     controller_enabler = false;
+    target_angle = 0.0;
+    target = 0.0;
+    p_controller_.set_ffwd_control(false);
+
   }  
   
   // check if there has been a heel strike
@@ -110,13 +120,14 @@ void system_state_update() {
       ideal_side_state = flip_expectation(ideal_side_state);
 
       // reset blend term to deal with changed trajectories
-      alpha = 0.1;
+      alpha = 1.;
     }
   }
 }
 
 // NUControl update loop
 void current_control_loop() {
+
   controller_.update_sensors();
   controller_.update_control();
 }
@@ -124,6 +135,9 @@ void current_control_loop() {
 // Update the commanded position loop
 void command_update_loop()
 {
+  // update state
+  system_state_update();
+
   // check if control is enabled 
   if (controller_enabler) {
     // use fwd if classification state is same side, and vice versa
@@ -165,10 +179,13 @@ void command_update_loop()
 
     // handle alpha
     if (alpha < 1.0f) {
-      // increment alpha such that it reaches 1.0 a quarter way through the trajectory
-      alpha += 0.25f / (trajectory.fwd_len + trajectory.bck_len);  
+      // increment alpha such that it reaches 1.0 half way through the trajectory
+      alpha += 0.5f / (trajectory.fwd_len + trajectory.bck_len);  
     }
-  }
+  } 
+  // else {
+  //   target_angle = 0.0;
+  // }
   // apply offset and get shaft angle and velocity
   system_angle =  controller_.get_shaft_angle() - offset; 
   system_vel =  controller_.get_shaft_velocity();
@@ -222,20 +239,47 @@ void print_loop()
   Serial.print(">i_target:");
   Serial.println(target, 3);
 
-  Serial.print(">ax:");
+  Serial.print(">ax_g:");
   Serial.println(imu_data.x, 3);
 
-  Serial.print(">ay:");
+  Serial.print(">ay_g:");
   Serial.println(imu_data.y, 3);
 
-  Serial.print(">az:");
+  Serial.print(">az_g:");
   Serial.println(imu_data.z, 3);
+
+  Serial.print(">acc_mag_mav:");
+  Serial.println(heel_strike_filter.get_mav_result(), 3);
+
+  Serial.print(">acc_medio_lateral_mav:");
+  Serial.println(heel_strike_filter.get_medio_lateral_mav_result(), 3);
 
   Serial.print(">period:");
   Serial.println(heel_strike_result.period);
 
   Serial.print(">classification:");
   Serial.println(static_cast<int>(heel_strike_result.classification));
+
+  Serial.print(">hs_count:");
+  Serial.println(heel_strike_result.count);
+
+  Serial.print(">sum:");
+  Serial.println(heel_strike_result.sum, 3);
+
+  Serial.print(">enabler:");
+  Serial.println(controller_enabler);
+
+  Serial.print(">alpha:");
+  Serial.println(alpha, 3);
+
+  Serial.print(">count:");
+  Serial.println(count);
+
+  Serial.print(">traj_length:");
+  Serial.println(int(trajectory.bck_len + trajectory.fwd_len));
+
+  Serial.print(">confidence:");
+  Serial.println(heel_strike_result.confidence);
 }
 
 void setup()
@@ -244,7 +288,7 @@ void setup()
 
   imu.init();
 
-  p_controller_.set_ffwd_control(true);
+  p_controller_.set_ffwd_control(false);
 
   TeensyTimerTool::attachErrFunc(timer_errors);
   analogReadAveraging(1);
@@ -257,19 +301,26 @@ void setup()
   }
 
   Serial.println("Aligning");
-  controller_.set_calibration_scan_range(0.5); // 15 degrees
-  controller_.set_calibration_scan_speed(0.1);
+  // controller_.set_calibration_scan_range(0.5); // 15 degrees
+  // controller_.set_calibration_scan_speed(0.1);
 
-  // auto calib = BrushlessCalibration{};
-  // controller_.load_calibration();
-  
-  if (!controller_.align_sensors()) {
-    Serial.println("Motor controller component failed to align");
-    exit(0);
-  }
+  // define and load calibration
+  const PhaseValues<int> cs_phase_idx{-1, -1, 0};
+  const PhaseValues<int> cs_phase_dirs{0, 1, 1};
+  const int encoder_direction{-1};
+  const float eangle_offset{2.848648778f};
+  const float cogging_offset = 0.f;  // hopefully this is 0???
+  auto calib = BrushlessCalibration{cs_phase_idx, cs_phase_dirs, encoder_direction, eangle_offset, cogging_offset};
+  controller_.load_calibration(calib);
+
+  // comment alginment out if using pre-defined calibration
+  // if (!controller_.align_sensors()) {
+  //   Serial.println("Motor controller component failed to align");
+  //   exit(0);
+  // }
+  controller_.print_calibration();
 
   Serial.println("Preparing to run");
-  controller_.print_calibration();
   delay(1000);
 
   controller_.set_control_mode(ControllerMode::TORQUE);
