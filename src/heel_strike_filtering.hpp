@@ -129,6 +129,8 @@ int heel_strike_count_;
 Classification expectation_;
 /// \brief The count of confidence in our assumption about the classification
 int confidence_;
+/// \brief The maximum allowable value of the confidence
+int max_confidence_;
 /// \brief The sum of medio-lateral imu signal since last heel strike
 float sum_;
 /// \brief The previous sum of medio-lateral imu signal since last heel strike

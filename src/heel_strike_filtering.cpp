@@ -20,6 +20,7 @@ HeelStrikeFilter::HeelStrikeFilter(int window_size, float threshold, float refra
   r_sigma_ (0.031433f),
   expectation_ (Classification::LEFT),
   confidence_ (0),
+  max_confidence_ (10),
   sum_ (0.0),
   prev_sum_ (0.0),
   feature_ (0.0)
@@ -90,10 +91,10 @@ bool HeelStrikeFilter::detect_steps()
 // update the confidence in our classifications
 void HeelStrikeFilter::update_confidence() {
   if (expectation_ == hs_classification_) {
-    if (confidence_ > 1) {
-      // extra reward for successive correct expectations
-      confidence_++;
-    }
+    // if (confidence_ > 1) {
+    //   // extra reward for successive correct expectations
+    //   confidence_++;
+    // }
     // if expectation aligns with result, increment confidence
     confidence_++;
 
@@ -102,10 +103,10 @@ void HeelStrikeFilter::update_confidence() {
   } else {
     if (hs_classification_ == Classification::UNKNOWN){
       // if heel strike result is unknown, decrement by 1
-      confidence_--;
+      // confidence_--;  // DON"T Decrement
     } else {
       // if heel strike result is OPPOSITE, decrement by 2
-      confidence_-=2;
+      confidence_-=1;  // actually decrement by 1
     }
 
     if (confidence_ > 0) {
@@ -117,8 +118,8 @@ void HeelStrikeFilter::update_confidence() {
   // clamp value of confidence
   if (confidence_ < 0) {
     confidence_ = 0;
-  } else if (confidence_ > 5) {
-    confidence_ = 5;
+  } else if (confidence_ > max_confidence_) {
+    confidence_ = max_confidence_;
   }
 }
 

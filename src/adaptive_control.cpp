@@ -8,12 +8,11 @@
 #include "heel_strike_filtering.hpp"
 #include "lsm6dsv.hpp"
 
-// trajectory headers
-// #include "steps.hpp"
-// #include "swing_traj_11.hpp"
 #include "swing_lut.hpp"
+#include "steps.hpp"
 
 #define PROSTHESIS_SIDE Classification::LEFT
+#define STAND_TESTING true
 
 TeensyTimerTool::PeriodicTimer current_control_timer_(TeensyTimerTool::TCK);
 TeensyTimerTool::PeriodicTimer command_update_timer_(TeensyTimerTool::TCK);
@@ -40,13 +39,13 @@ BrushlessDriver GateDriver{{6, 5, 4}, 3, PWM_FREQ, PWM_RES, DRIVER_VOLTAGE};
 
 BrushlessController controller_{GL40, GateDriver, Current_Sensors, Encoder};
 
-// PositionController p_controller_{0.0, 0.0, 0.0, 1.0};
-// PositionController p_controller_{1.0f, 0.0, 0.0, 1.0f};
+// PositionController p_controller_{0.0, 0.0, 0.0, 0.0, 0.0};
+PositionController p_controller_{6.0f, 3.0, 0.1, 0.0f, 0.0f};
 // PositionController p_controller_{15.0, 0.01, 0., 1.4};
 // PositionController p_controller_{13.0f, 0.03f, 0.35f, 1.0f};
 
 // tuning pid on michael jenz
-PositionController p_controller_{25.0, 0.0, 0.5, 1.4};
+// PositionController p_controller_{10.0, 0.0, .25, 1.4};
 
 
 // IMU and step detection initialization
@@ -66,7 +65,7 @@ volatile auto next_angle = 0.0f;
 volatile auto system_angle = 0.0f;
 volatile auto system_vel = 0.0f;
 volatile auto alpha = 1.0f;
-auto offset = 1.4f;
+auto offset = -0.140f;
 SwingEntry trajectory;
 SwingEntry prev_trajectory;
 auto controller_enabler = false;
@@ -76,20 +75,21 @@ void system_state_update() {
   if (!controller_enabler && heel_strike_result.confidence == 5) {
     // if control is disabled, and confidence reaches 5 turn it on!
     controller_enabler = true;
-    p_controller_.set_ffwd_control(true);
-
+    controller_.start_control(100, false);
+    
     // save this expectation internally, this will be the running assumption
     ideal_side_state = heel_strike_result.classification;
     rt_side_state = ideal_side_state;
+
     // start trajectory from beginning
     count = 0;
   }
   else if (controller_enabler && heel_strike_result.confidence == 0) {
     // if control is enabled, and confidence reaches 0 turn it off!
     controller_enabler = false;
+    controller_.stop_control();
     target_angle = 0.0;
     target = 0.0;
-    p_controller_.set_ffwd_control(false);
 
   }  
   
@@ -135,54 +135,62 @@ void current_control_loop() {
 // Update the commanded position loop
 void command_update_loop()
 {
-  // update state
-  system_state_update();
+  if (!STAND_TESTING){
+    // update state
+    system_state_update();
+  }
+    // check if control is enabled 
+    if (controller_enabler) {
+      // use fwd if classification state is same side, and vice versa
+      if (rt_side_state == PROSTHESIS_SIDE) {
+        // check if trajectory has been completed, if so proceed to back half
+        if (count >= int(trajectory.fwd_len)) {
+          // flip rt state
+          rt_side_state = flip_expectation(rt_side_state);
 
-  // check if control is enabled 
-  if (controller_enabler) {
-    // use fwd if classification state is same side, and vice versa
-    if (rt_side_state == PROSTHESIS_SIDE) {
-      // check if trajectory has been completed, if so proceed to back half
-      if (count >= int(trajectory.fwd_len)) {
-        // flip rt state
-        rt_side_state = flip_expectation(rt_side_state);
+          // reset count
+          count = 0;
 
-        // reset count
-        count = 0;
-
-        // set target angle from bwd
-        target_angle = (1 - alpha) * prev_trajectory.bck[count] + alpha * trajectory.bck[count];
-      } else if (count < int(prev_trajectory.fwd_len)) {
-        target_angle = (1 - alpha) * prev_trajectory.fwd[count] + alpha * trajectory.fwd[count];
+          // set target angle from bwd
+          target_angle = (1 - alpha) * prev_trajectory.bck[count] + alpha * trajectory.bck[count];
+        } else if (count < int(prev_trajectory.fwd_len)) {
+          target_angle = (1 - alpha) * prev_trajectory.fwd[count] + alpha * trajectory.fwd[count];
+        } else {
+          target_angle =  trajectory.fwd[count];
+        }
       } else {
-        target_angle =  trajectory.fwd[count];
+        // check if trajectory has been completed, if so proceed to front half
+        if (count >= int(trajectory.bck_len)) {
+          // flip rt state
+          rt_side_state = flip_expectation(rt_side_state);
+
+          // reset count
+          count = 0;
+
+          // set target angle from fwd
+          target_angle = (1 - alpha) * prev_trajectory.fwd[count] + alpha * trajectory.fwd[count];
+        } else if (count < int(prev_trajectory.bck_len)) {
+          target_angle = (1 - alpha) * prev_trajectory.bck[count] + alpha * trajectory.bck[count];
+        } else {
+          target_angle =  trajectory.bck[count];
+        }
       }
-    } else {
-      // check if trajectory has been completed, if so proceed to front half
-      if (count >= int(trajectory.bck_len)) {
-        // flip rt state
-        rt_side_state = flip_expectation(rt_side_state);
+      // increment
+      count++;
 
-        // reset count
-        count = 0;
-
-        // set target angle from fwd
-        target_angle = (1 - alpha) * prev_trajectory.fwd[count] + alpha * trajectory.fwd[count];
-      } else if (count < int(prev_trajectory.bck_len)) {
-        target_angle = (1 - alpha) * prev_trajectory.bck[count] + alpha * trajectory.bck[count];
-      } else {
-        target_angle =  trajectory.bck[count];
+      // handle alpha
+      if (alpha < 1.0f) {
+        // increment alpha such that it reaches 1.0 half way through the trajectory
+        alpha += 0.5f / (trajectory.fwd_len + trajectory.bck_len);  
       }
     }
-    // increment
-    count++;
+  // } else {
+  //   target_angle = step_at_1500ms[count];
+  //   count++;
+  //   if (count >= int(step_at_1500ms.size()))
+  //   {count = 0;}
 
-    // handle alpha
-    if (alpha < 1.0f) {
-      // increment alpha such that it reaches 1.0 half way through the trajectory
-      alpha += 0.5f / (trajectory.fwd_len + trajectory.bck_len);  
-    }
-  } 
+  // }
   // else {
   //   target_angle = 0.0;
   // }
@@ -195,6 +203,8 @@ void command_update_loop()
 // position controller loop
 void position_control_loop()
 {
+
+  auto static target_count = 0;
   // check if control is enabled
   if (controller_enabler){
     // pump position PID controller
@@ -203,6 +213,12 @@ void position_control_loop()
     // set target torque as 0.0 if controller is off
     target = 0.0f;
   }
+  target_count++;
+
+  // if (target_count > 1000){
+  //   target *= -1;
+  //   target_count = 0;
+  // }3
 
   // send command to NUControl
   controller_.set_target(target);
@@ -224,6 +240,10 @@ void imu_loop()
 // printing loop
 void print_loop()
 {
+
+  auto phase_currents = Current_Sensors.get_phase_currents();
+  auto qd_currents = controller_.get_qd_current();
+
   Serial.print(">setpoint:");
   Serial.println(target_angle, 3);
 
@@ -236,8 +256,23 @@ void print_loop()
   Serial.print(">error:");
   Serial.println(float(target_angle-system_angle), 3);
 
-  Serial.print(">i_target:");
+  Serial.print(">torque_target:");
   Serial.println(target, 3);
+
+  Serial.print(">i_phase_a:");
+  Serial.println(phase_currents.a, 3);
+
+  Serial.print(">i_phase_b:");
+  Serial.println(phase_currents.b, 3);
+
+  Serial.print(">i_phase_c:");
+  Serial.println(phase_currents.c, 3);
+
+  Serial.print(">i_quaddirect_q:");
+  Serial.println(qd_currents.q, 3);
+
+  Serial.print(">i_quaddirect_d:");
+  Serial.println(qd_currents.d, 3);
 
   Serial.print(">ax_g:");
   Serial.println(imu_data.x, 3);
@@ -288,8 +323,11 @@ void setup()
 
   imu.init();
 
-  p_controller_.set_ffwd_control(false);
-
+  p_controller_.set_gvty_ffwd_control(true);
+  p_controller_.set_spring_ffwd_control(true);
+  p_controller_.set_u_clamp_val(0.5);
+  p_controller_.set_theta_rest_val(-.264);
+  
   TeensyTimerTool::attachErrFunc(timer_errors);
   analogReadAveraging(1);
 
@@ -301,30 +339,33 @@ void setup()
   }
 
   Serial.println("Aligning");
-  // controller_.set_calibration_scan_range(0.5); // 15 degrees
-  // controller_.set_calibration_scan_speed(0.1);
+
 
   // define and load calibration
-  const PhaseValues<int> cs_phase_idx{-1, -1, 0};
+  const PhaseValues<int> cs_phase_idx{-1, 1, 0};
   const PhaseValues<int> cs_phase_dirs{0, 1, 1};
   const int encoder_direction{-1};
-  const float eangle_offset{2.848648778f};
+  const float eangle_offset{2.85f};
   const float cogging_offset = 0.f;  // hopefully this is 0???
   auto calib = BrushlessCalibration{cs_phase_idx, cs_phase_dirs, encoder_direction, eangle_offset, cogging_offset};
   controller_.load_calibration(calib);
 
   // comment alginment out if using pre-defined calibration
+  // controller_.set_calibration_scan_range(0.3); 
+  // controller_.set_calibration_scan_speed(0.1);
   // if (!controller_.align_sensors()) {
   //   Serial.println("Motor controller component failed to align");
   //   exit(0);
   // }
-  controller_.print_calibration();
+  // controller_.print_calibration();
 
   Serial.println("Preparing to run");
   delay(1000);
 
   controller_.set_control_mode(ControllerMode::TORQUE);
   controller_.set_position_filter({{0.25f, 0.25f, 0.25f, 0.25f}, {}});
+  // controller_.set_position_filter({{0.2f, 0.2f, 0.2f, 0.2f, 0.2f}, {}});
+  // controller_.set_position_filter({{0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f, 0.1f}, {}});
   controller_.set_velocity_filter(vel_filter_200_);
   controller_.set_feedforward_state(true);
   controller_.set_feedback_state(false);
@@ -332,7 +373,14 @@ void setup()
 
   controller_.set_target(0.0f);
 
-  controller_.start_control(100, false);
+  if (STAND_TESTING) {
+    trajectory = swing_lut_lookup(1.131680f);
+    controller_enabler = true;
+    controller_.start_control(100, false);
+    rt_side_state = Classification::LEFT;
+    prev_trajectory = trajectory;
+    target = .25f;
+  }
 
   // begin timers, rate in micro-seconds
   current_control_timer_.begin(current_control_loop, 100);

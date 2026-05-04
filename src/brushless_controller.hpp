@@ -50,8 +50,9 @@ public:
     ctrl_timer_(TeensyTimerTool::TCK),
     print_timer_(TeensyTimerTool::TCK)
   {
-    Kp_ = motor_.phase_L * _2_PI_ * 25.f; // Ohms = V / A
-    Ki_ = motor_.phase_R * _2_PI_ * 25.f; // Ohms * s = Vs / A
+    Kp_ = motor_.phase_L * _2_PI_ * 100.f; // Ohms = V / A
+    Ki_ = motor_.phase_R * _2_PI_ * 0.f; // Ohms * s = Vs / A
+    // Ki_ = 0.0f; // Ohms * s = Vs / A
     set_feedback_control(PIController<QuadDirectValues<float>>(Kp_, Ki_, control_period_s_));
     MAX_VOLT_ = 1.5f * motor_.phase_R * motor_.MAX_CURRENT;
     set_filters(filter_cutoff_freq_hz_, filter_cutoff_freq_hz_current_, filter_cutoff_freq_hz_fb_);
@@ -273,6 +274,7 @@ public:
   float get_encoder_angle() const { return encoder_angle.get_full_angle(); }
   float get_encoder_radians() const { return encoder_angle.get_angle(); }
   float get_shaft_velocity() const { return shaft_velocity_; }
+  QuadDirectValues<float> get_qd_current() const {return quaddirect_currents_; }
   MotorParameters get_motor() const {return motor_;}
 
   void set_encoder_direction(int dir) {
