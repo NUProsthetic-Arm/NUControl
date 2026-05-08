@@ -3,6 +3,7 @@
 HeelStrikeFilter::HeelStrikeFilter(int window_size, float threshold, float refractory_period, int frequency)
 : window_size_ (window_size),
   threshold_ (threshold),
+  noise_threshold_(2.0),
   refractory_period_ (refractory_period),
   frequency_ (frequency),
   count_since_step_ (0),
@@ -77,7 +78,7 @@ const HeelStrikeResult HeelStrikeFilter::get_result()
 bool HeelStrikeFilter::detect_steps()
 {
   // check if threshold requirement is satisfied
-  if (curr_mav_ > threshold_)
+  if (curr_mav_ > threshold_ && curr_mav_ < noise_threshold_)
   {
     // check if peak requirement is satisfied
     if ((curr_mav_ > prev_mav_) && (curr_mav_ > next_mav_)) {
@@ -135,7 +136,8 @@ void HeelStrikeFilter::update_period()
   }
   // update count_since_step accordingly
   if (result_) {
-    // enforce refactory period for step detection
+    // enforce refactory period for step detection  if (curr_mav_ > threshold_ && curr_mav_ < max_threshold_)
+
     if (count_since_step_ > frequency_ * refractory_period_) {
         // step is now confirmed, classify and update period
         period_ = float(count_since_step_) / float(frequency_);

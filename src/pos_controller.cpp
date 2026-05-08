@@ -17,7 +17,10 @@ PositionController::PositionController(float Kp, float Ki, float Kd, float Kff_g
   spring_fwd_enable_ (false),
   spring_term_ (0.0f),
   theta_rest_ (0.0f),
-  dt_ (0.001)
+  dt_ (0.001),
+  err_der_raw_ (0.0),
+  err_der_filt_ (0.0),
+  alpha_d_ (0.01)
 {
     Serial.println("Initializing PID position controller...");
 }
@@ -54,9 +57,13 @@ float PositionController::pump_controller(float setpoint, float actual, float sh
     if (gvty_fwd_enable_) {gvty_term_ = std::sin(actual);}
     if (spring_fwd_enable_) {spring_term_ = theta_rest_ - actual;}
     if (Ki_ != 0.0) {err_int_ += err_ * dt_;}
-    if (Kd_ != 0.0) {err_der_ = -(shaft_vel);} 
-    // if (Kd_ != 0.0) {err_der_ = (err_-err_prev_) / dt_;} 
-    
+    // if (Kd_ != 0.0) {err_der_ = -(shaft_vel);} 
+
+    if (Kd_ != 0.0) {
+        err_der_raw_ = (err_ - err_prev_) / dt_;
+        err_der_filt_ = alpha_d_ * err_der_raw_ + (1.0f - alpha_d_) * err_der_filt_;
+        err_der_ = err_der_filt_;
+    }    
     err_prev_ = err_;
 
     // clamp err_int

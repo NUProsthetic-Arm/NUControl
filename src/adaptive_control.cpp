@@ -12,7 +12,7 @@
 #include "steps.hpp"
 
 #define PROSTHESIS_SIDE Classification::LEFT
-#define STAND_TESTING true
+#define STAND_TESTING false
 
 TeensyTimerTool::PeriodicTimer current_control_timer_(TeensyTimerTool::TCK);
 TeensyTimerTool::PeriodicTimer command_update_timer_(TeensyTimerTool::TCK);
@@ -40,7 +40,7 @@ BrushlessDriver GateDriver{{6, 5, 4}, 3, PWM_FREQ, PWM_RES, DRIVER_VOLTAGE};
 BrushlessController controller_{GL40, GateDriver, Current_Sensors, Encoder};
 
 // PositionController p_controller_{0.0, 0.0, 0.0, 0.0, 0.0};
-PositionController p_controller_{6.0f, 3.0, 0.1, 0.0f, 0.0f};
+PositionController p_controller_{8.0f, 0.0, 0.175, 0.0f, 0.0f};
 // PositionController p_controller_{15.0, 0.01, 0., 1.4};
 // PositionController p_controller_{13.0f, 0.03f, 0.35f, 1.0f};
 
@@ -50,7 +50,7 @@ PositionController p_controller_{6.0f, 3.0, 0.1, 0.0f, 0.0f};
 
 // IMU and step detection initialization
 LSM6DSV_IMU imu;
-HeelStrikeFilter heel_strike_filter(15, 1.1f, 0.4f, 1000);
+HeelStrikeFilter heel_strike_filter(15, 1.1f, 0.45f, 1000);
 
 // init global vars
 auto imu_data = accelerations{0.0f, 0.0f, 0.0f};
@@ -65,7 +65,7 @@ volatile auto next_angle = 0.0f;
 volatile auto system_angle = 0.0f;
 volatile auto system_vel = 0.0f;
 volatile auto alpha = 1.0f;
-auto offset = -0.140f;
+auto offset = 1.43f;
 SwingEntry trajectory;
 SwingEntry prev_trajectory;
 auto controller_enabler = false;
@@ -120,7 +120,7 @@ void system_state_update() {
       ideal_side_state = flip_expectation(ideal_side_state);
 
       // reset blend term to deal with changed trajectories
-      alpha = 1.;
+      alpha = .1;
     }
   }
 }
@@ -156,7 +156,9 @@ void command_update_loop()
         } else if (count < int(prev_trajectory.fwd_len)) {
           target_angle = (1 - alpha) * prev_trajectory.fwd[count] + alpha * trajectory.fwd[count];
         } else {
-          target_angle =  trajectory.fwd[count];
+          // target_angle =  trajectory.fwd[count];
+          int clamped = int(prev_trajectory.fwd_len) - 1;
+          target_angle = (1.0f - alpha) * prev_trajectory.fwd[clamped] + alpha * trajectory.fwd[count];
         }
       } else {
         // check if trajectory has been completed, if so proceed to front half
@@ -172,7 +174,11 @@ void command_update_loop()
         } else if (count < int(prev_trajectory.bck_len)) {
           target_angle = (1 - alpha) * prev_trajectory.bck[count] + alpha * trajectory.bck[count];
         } else {
-          target_angle =  trajectory.bck[count];
+          // target_angle =  trajectory.bck[count];
+          int clamped = int(prev_trajectory.bck_len) - 1;
+          target_angle = (1.0f - alpha) * prev_trajectory.bck[clamped] + alpha * trajectory.bck[count];
+
+          
         }
       }
       // increment
@@ -181,7 +187,7 @@ void command_update_loop()
       // handle alpha
       if (alpha < 1.0f) {
         // increment alpha such that it reaches 1.0 half way through the trajectory
-        alpha += 0.5f / (trajectory.fwd_len + trajectory.bck_len);  
+        alpha += 1.8f / (trajectory.fwd_len + trajectory.bck_len);  
       }
     }
   // } else {
@@ -194,6 +200,7 @@ void command_update_loop()
   // else {
   //   target_angle = 0.0;
   // }
+
   // apply offset and get shaft angle and velocity
   system_angle =  controller_.get_shaft_angle() - offset; 
   system_vel =  controller_.get_shaft_velocity();
@@ -323,8 +330,8 @@ void setup()
 
   imu.init();
 
-  p_controller_.set_gvty_ffwd_control(true);
-  p_controller_.set_spring_ffwd_control(true);
+  p_controller_.set_gvty_ffwd_control(false);
+  p_controller_.set_spring_ffwd_control(false);
   p_controller_.set_u_clamp_val(0.5);
   p_controller_.set_theta_rest_val(-.264);
   

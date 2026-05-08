@@ -99,6 +99,8 @@ float gaussian_pdf(float dp, float u, float stdv);
 int window_size_;
 /// \brief The IMU threshold for step detection
 float threshold_;
+/// \brief The IMU threshold for noise rejection, IMU samples higher than this are noise
+float noise_threshold_;
 /// \brief The minimum time in seconds that steps must be apart
 float refractory_period_;
 /// \brief The frequency at which this class is updated in Hz

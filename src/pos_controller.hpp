@@ -81,6 +81,10 @@ private:
   float theta_rest_;
   /// \brief Delta time
   float dt_;
+  float err_der_raw_;
+  float err_der_filt_;
+  float alpha_d_;  // set in constructor, e.g. 0.1f for heavy filtering
+
 };
 
 #endif
