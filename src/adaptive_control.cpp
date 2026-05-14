@@ -40,7 +40,7 @@ BrushlessDriver GateDriver{{6, 5, 4}, 3, PWM_FREQ, PWM_RES, DRIVER_VOLTAGE};
 BrushlessController controller_{GL40, GateDriver, Current_Sensors, Encoder};
 
 // PositionController p_controller_{0.0, 0.0, 0.0, 0.0, 0.0};
-PositionController p_controller_{8.0f, 0.0, 0.175, 0.0f, 0.0f};
+PositionController p_controller_{8.0f, 0.0, 0.5, 0.0f, 0.0f};
 // PositionController p_controller_{15.0, 0.01, 0., 1.4};
 // PositionController p_controller_{13.0f, 0.03f, 0.35f, 1.0f};
 
@@ -50,7 +50,7 @@ PositionController p_controller_{8.0f, 0.0, 0.175, 0.0f, 0.0f};
 
 // IMU and step detection initialization
 LSM6DSV_IMU imu;
-HeelStrikeFilter heel_strike_filter(15, 1.1f, 0.45f, 1000);
+HeelStrikeFilter heel_strike_filter(15, 1.15f, 0.45f, 1000);
 
 // init global vars
 auto imu_data = accelerations{0.0f, 0.0f, 0.0f};
@@ -326,7 +326,7 @@ void print_loop()
 
 void setup()
 {
-  while (!Serial) {}
+  //while (!Serial) {}
 
   imu.init();
 

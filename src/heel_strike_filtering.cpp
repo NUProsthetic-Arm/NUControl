@@ -59,11 +59,6 @@ void HeelStrikeFilter::filter_update(accelerations acc)
     // run step detection algorithm
     result_ = detect_steps();
 
-    // classify if step detected
-    if (result_) {
-      // classify_step2();
-      // update_confidence();
-    }
   }  
 
   // update period

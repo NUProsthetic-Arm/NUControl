@@ -54,7 +54,7 @@ public:
     Ki_ = motor_.phase_R * _2_PI_ * 0.f; // Ohms * s = Vs / A
     // Ki_ = 0.0f; // Ohms * s = Vs / A
     set_feedback_control(PIController<QuadDirectValues<float>>(Kp_, Ki_, control_period_s_));
-    MAX_VOLT_ = 1.5f * motor_.phase_R * motor_.MAX_CURRENT;
+    MAX_VOLT_ = 2.1f * motor_.phase_R * motor_.MAX_CURRENT;
     set_filters(filter_cutoff_freq_hz_, filter_cutoff_freq_hz_current_, filter_cutoff_freq_hz_fb_);
   }
 
@@ -493,7 +493,7 @@ private:
   float control_period_s_ = 100.f * 1e-6f; // s
   float control_freq_hz_ = 10000.f;
 
-  float MAX_VOLT_ = 3.f;
+  float MAX_VOLT_ = 14.f;
 
   bool anticog_enable_ = false;
   std::function<float(float)> torque_mapper_ = [](float angle) -> float {return 0;};
