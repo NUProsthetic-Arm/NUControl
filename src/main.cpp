@@ -1,267 +1,377 @@
-// #include <Arduino.h>
-// #include <TeensyTimerTool.h>
-// #include <vector>
-// #include <math.h>
-// #include "nu_control.hpp"
-// #include <numeric>
-// #include "anticogging_mapper.hpp"
+#include <Arduino.h>
+#include <TeensyTimerTool.h>
+#include <vector>
+#include <math.h>
+#include <functional>
+#include "nu_control.hpp"
+#include "pos_controller.hpp"
+#include "heel_strike_filtering.hpp"
+#include "lsm6dsv.hpp"
 
-// TeensyTimerTool::PeriodicTimer timer_(TeensyTimerTool::TMR4);
+#include "swing_lut.hpp"
+#include "steps.hpp"
 
-// constexpr float CURR_GAIN = 5.f; // Amps / Volt
+#define PROSTHESIS_SIDE Classification::LEFT
+#define STAND_TESTING false
 
-// constexpr int ADC_RES = 10;
+TeensyTimerTool::PeriodicTimer current_control_timer_(TeensyTimerTool::TCK);
+TeensyTimerTool::PeriodicTimer command_update_timer_(TeensyTimerTool::TCK);
+TeensyTimerTool::PeriodicTimer position_control_timer_(TeensyTimerTool::TCK);
+TeensyTimerTool::PeriodicTimer imu_timer_(TeensyTimerTool::TCK);
+TeensyTimerTool::PeriodicTimer print_timer_(TeensyTimerTool::TCK);
 
-// InlineCurrentSensor CS1_1{A8, CURR_GAIN, ADC_RES};
-// InlineCurrentSensor CS1_2{A9, CURR_GAIN, ADC_RES};
+constexpr float CURR_GAIN = 3.3333333f; // Amps / Volt
+constexpr int ADC_RES = 10;
 
-// InlineCurrentSensor CS2_1{A0, CURR_GAIN, ADC_RES};
-// InlineCurrentSensor CS2_2{A1, CURR_GAIN, ADC_RES};
+InlineCurrentSensor Current_Phase_B{A3, CURR_GAIN, ADC_RES};
+InlineCurrentSensor Current_Phase_C{A8, CURR_GAIN, ADC_RES};
 
-// InlineCurrentSensorPackage CS1{{&CS1_1, &CS1_2}};
-// InlineCurrentSensorPackage CS2{{&CS2_1, &CS2_2}};
+InlineCurrentSensorPackage Current_Sensors{{&Current_Phase_C, &Current_Phase_B}};
 
-// constexpr float PWM_FREQ = 20000.f;
-// constexpr int PWM_RES = 12;
-// constexpr float DRIVER_VOLTAGE = 24.f;
+constexpr float PWM_FREQ = 20000.f;
+constexpr int PWM_RES = 12;
+constexpr float DRIVER_VOLTAGE = 16.f;
 
-// BrushlessDriver Driver1{{3, 4, 5}, 2, PWM_FREQ, PWM_RES, DRIVER_VOLTAGE};
-// BrushlessDriver Driver2{{7, 8, 9}, 6, PWM_FREQ, PWM_RES, DRIVER_VOLTAGE};
+const uint16_t EncoderReadCmd = (0b11 << 14) | 0xFFFF;
+SPIEncoder Encoder{EncoderReadCmd, SPI, 10};
 
-// uint16_t EncoderReadCmd = (0b11 << 14) | 0x3FFF;
+BrushlessDriver GateDriver{{6, 5, 4}, 3, PWM_FREQ, PWM_RES, DRIVER_VOLTAGE};
 
-// SPIEncoder Encoder1{EncoderReadCmd, SPI, 10};
-// SPIEncoder Encoder2{EncoderReadCmd, SPI1, 0};
+BrushlessController controller_{GL40, GateDriver, Current_Sensors, Encoder};
 
-// BrushlessController MosracController{U2535, Driver1, CS1, Encoder1};
-// BrushlessController MaxonController{EC45_Flat, Driver2, CS2, Encoder2};
+PositionController p_controller_{10.0f, 0.0, 0.7, 0.0f, 0.0f};
 
+// IMU and step detection initialization
+LSM6DSV_IMU imu;
+HeelStrikeFilter heel_strike_filter(15, 1.15f, 0.45f, 1000);
 
-// DiscreteFilter<float, float> vel_filter{vel_coeffs_, {}};
+// init global vars
+auto imu_data = accelerations{0.0f, 0.0f, 0.0f};
+auto heel_strike_result = HeelStrikeResult{0, Classification::UNKNOWN, 0.0f};
+auto prev_heel_strike_result = HeelStrikeResult{0, Classification::UNKNOWN, 0.0f};
+auto ideal_side_state = Classification::UNKNOWN;
+auto rt_side_state = Classification::UNKNOWN;
+volatile auto count = 0;
+volatile auto target = 0.0f;
+volatile auto target_angle = 0.0f;
+volatile auto next_angle = 0.0f;
+volatile auto system_angle = 0.0f;
+volatile auto system_vel = 0.0f;
+volatile auto alpha = 1.0f;
+auto offset = 1.43f;
+SwingEntry trajectory;
+SwingEntry prev_trajectory;
+auto controller_enabler = false;
 
-// std::vector<float> pos_coeffs_{0.25f, 0.25f, 0.25f, 0.25f};
+void system_state_update() {
+  // check if controller should be enabled
+  if (!controller_enabler && heel_strike_result.confidence == 5) {
+    // if control is disabled, and confidence reaches 5 turn it on!
+    controller_enabler = true;
+    controller_.start_control(100, false);
+    
+    // save this expectation internally, this will be the running assumption
+    ideal_side_state = heel_strike_result.classification;
+    rt_side_state = ideal_side_state;
 
-// DiscreteFilter<float, float> pos_filter{pos_coeffs_, {}};
+    // start trajectory from beginning
+    count = 0;
+  }
+  else if (controller_enabler && heel_strike_result.confidence == 0) {
+    // if control is enabled, and confidence reaches 0 turn it off!
+    controller_enabler = false;
+    controller_.stop_control();
+    target_angle = 0.0;
+    target = 0.0;
 
-// // CoggingMapper cogging_mapper{MosracController};
-
-
-// // const std::vector<float> MosracCoggingMap
-// // {
-// //   #include "anticogging_map.csv"
-// // };
-
-// // const PhaseValues<std::vector<float>> MosracVoltageCoggingMap
-// // {
-// //   {
-// //     #include "anticogging_map_va.csv"
-// //     },
-// //   {
-// //     #include "anticogging_map_vb.csv"
-// //     },
-// //   {
-// //     #include "anticogging_map_vc.csv"
-// //     }
-// // };
-
-
-// // // int i = 0;
-
-// float mosrac_zero_angle = 0.f;
-// float maxon_zero_angle = 0.f;
-// // float kappa = 1.f;
-// // float charlie = 0.07f;
-
-// // // K = 5, C = 0.11
-// // // K = 7, C = 0.07
-
-// // Butterworth2nd<float> pos_filter = Butterworth2nd<float>(5000.f, 10000.f);
-// // Butterworth2nd<float> vel_filter = Butterworth2nd<float>(1000.f, 10000.f);
-// // Butterworth2nd<float> spring_filter = Butterworth2nd<float>(1000.f, 10000.f);
-// // Butterworth2nd<float> damper_filter = Butterworth2nd<float>(10.f, 10000.f);
-
-// // float MAX_CURRENT = 5.f;
-
-// // float MAX_TORQUE = min(U2535.kT, EC45_Flat.kT) * MAX_CURRENT;
-
-// // float last_torque = 0.f;
-
-// // int indexer = 0;
-
-// // float last_maxon_read_ = 0.f;
-// // float last_mosrac_read_ = 0.f;
-
-// // float last_delta_read_ = 0.f;
-
-// // void bilateral(){
-// //     MosracController.update_sensors();
-// //     MaxonController.update_sensors();
-
-// //     float mosrac_ang = (MosracController.get_shaft_angle() - mosrac_zero_angle);
-// //     float maxon_ang = (MaxonController.get_shaft_angle() - maxon_zero_angle);
-
-// //     // last_mosrac_read_ = last_mosrac_read_ * 0.5f + 0.5f * mosrac_ang;
-// //     // last_maxon_read_ = last_maxon_read_ * 0.5f + 0.5f * maxon_ang;
-
-// //     float delta_pos = (maxon_ang - mosrac_ang);
-// //     float delta_dot = (MaxonController.get_shaft_velocity() - MosracController.get_shaft_velocity());
-
-// //     if(fabs(delta_pos) > 5){
-// //       timer_.stop();
-// //     }
-
-// //     // if(fabs(delta_pos) > 0.01f)
-// //     // {
-// //     //   delta_dot = 0.f;
-// //     // }
-
-// //     float torque = (kappa * delta_pos + charlie * delta_dot);
-
-// //     // last_delta_read_ = delta_pos;
-// //     // if(fabs(torque) < 0.02f){
-// //     //   torque = 0.f;
-// //     // }
-
-// //     if(indexer == 1000) {
-// //       Serial.print(mosrac_ang,6);
-// //       Serial.print("\t");
-// //       Serial.print(maxon_ang,6);
-// //       Serial.print("\t");
-// //       Serial.print(delta_dot, 6);
-// //       Serial.print("\t");
-// //       Serial.println(torque, 6);
-// //       indexer = 0;
-// //     }
-
-
-
-// //     float mosrac_torque = std::clamp(torque, -MAX_TORQUE, MAX_TORQUE);
-// //     float maxon_torque = std::clamp(-torque, -MAX_TORQUE, MAX_TORQUE);
-
-// //     MosracController.set_target(mosrac_torque);
-// //     MaxonController.set_target(maxon_torque);
-
-// //     MosracController.update_control();
-// //     MaxonController.update_control();
-// //     last_torque = torque;
-// //     ++indexer;
-// // }
-
-// // void update()
-// // {
-// //   if(indexer == 0) {
-// //     Serial.println("=====");
-// //   }
-// //   auto val_1 = Encoder1.read_raw();
-// //   auto val_2 = Encoder2.read_raw();
+  }  
   
-// //   Serial.print(val_1);
-// //   Serial.print("\t");
-// //   Serial.println(val_2);
+  // check if there has been a heel strike
+  if (heel_strike_result.count != prev_heel_strike_result.count) {
+    // update prev_trajectory for smoothing
+    prev_trajectory = trajectory;
 
-// //   if(indexer == 10000){
-// //     Serial.println("=====");
-// //     timer_.stop();
+    // load in new trajectory
+    trajectory = swing_lut_lookup(heel_strike_result.period + prev_heel_strike_result.period);
+  
+    // update prev_period to check for new heel strike
+    prev_heel_strike_result = heel_strike_result;
 
-// //   }
-// //   indexer++;
-// // }
+    // update the trajectory in use
+    if (controller_enabler) {
+      // if heel strike occured before trajectory finished, flip both to match
+      if (ideal_side_state == rt_side_state) {
+        if (PROSTHESIS_SIDE == ideal_side_state) {
+          // if heel strike was on same side as prosthesis, use fwd trajectory
+          rt_side_state = PROSTHESIS_SIDE;
+        } else {
+          // if opposite, use bwd trajectory
+          rt_side_state = flip_expectation(PROSTHESIS_SIDE);
+        }
+      }      
+      // flip ideal expectation in both cases
+      ideal_side_state = flip_expectation(ideal_side_state);
 
-// void pos_cont(){
-//   MaxonController.update_sensors();
-//   auto ang = MaxonController.get_shaft_angle();
+      // reset blend term to deal with changed trajectories
+      alpha = .1;
+    }
+  }
+}
+
+// NUControl update loop
+void current_control_loop() {
+
+  controller_.update_sensors();
+  controller_.update_control();
+}
+
+// Update the commanded position loop
+void command_update_loop()
+{
+  if (!STAND_TESTING){
+    // update state
+    system_state_update();
+  }
+    // check if control is enabled 
+    if (controller_enabler) {
+      // use fwd if classification state is same side, and vice versa
+      if (rt_side_state == PROSTHESIS_SIDE) {
+        // check if trajectory has been completed, if so proceed to back half
+        if (count >= int(trajectory.fwd_len)) {
+          // flip rt state
+          rt_side_state = flip_expectation(rt_side_state);
+
+          // reset count
+          count = 0;
+
+          // set target angle from bwd
+          target_angle = (1 - alpha) * prev_trajectory.bck[count] + alpha * trajectory.bck[count];
+        } else if (count < int(prev_trajectory.fwd_len)) {
+          target_angle = (1 - alpha) * prev_trajectory.fwd[count] + alpha * trajectory.fwd[count];
+        } else {
+          // target_angle =  trajectory.fwd[count];
+          int clamped = int(prev_trajectory.fwd_len) - 1;
+          target_angle = (1.0f - alpha) * prev_trajectory.fwd[clamped] + alpha * trajectory.fwd[count];
+        }
+      } else {
+        // check if trajectory has been completed, if so proceed to front half
+        if (count >= int(trajectory.bck_len)) {
+          // flip rt state
+          rt_side_state = flip_expectation(rt_side_state);
+
+          // reset count
+          count = 0;
+
+          // set target angle from fwd
+          target_angle = (1 - alpha) * prev_trajectory.fwd[count] + alpha * trajectory.fwd[count];
+        } else if (count < int(prev_trajectory.bck_len)) {
+          target_angle = (1 - alpha) * prev_trajectory.bck[count] + alpha * trajectory.bck[count];
+        } else {
+          // target_angle =  trajectory.bck[count];
+          int clamped = int(prev_trajectory.bck_len) - 1;
+          target_angle = (1.0f - alpha) * prev_trajectory.bck[clamped] + alpha * trajectory.bck[count];
+
+          
+        }
+      }
+      // increment
+      count++;
+
+      // handle alpha
+      if (alpha < 1.0f) {
+        // increment alpha such that it reaches 1.0 half way through the trajectory
+        alpha += 1.8f / (trajectory.fwd_len + trajectory.bck_len);  
+      }
+    }
+
+  // apply offset and get shaft angle and velocity
+  system_angle =  controller_.get_shaft_angle() - offset; 
+  system_vel =  controller_.get_shaft_velocity();
+
+}
+
+// position controller loop
+void position_control_loop()
+{
+
+  auto static target_count = 0;
+  // check if control is enabled
+  if (controller_enabler){
+    // pump position PID controller
+    target = p_controller_.pump_controller(target_angle, system_angle, system_vel);
+  } else {
+    // set target torque as 0.0 if controller is off
+    target = 0.0f;
+  }
+  target_count++;
+
+  // send command to NUControl
+  controller_.set_target(target);
+}
+
+// imu and step detection loop
+void imu_loop()
+{ 
+  // collect imu data
+  imu_data = imu.get_acc();
+
+  // update heel strike filter
+  heel_strike_filter.filter_update(imu_data);
+
+  // get most recent results
+  heel_strike_result = heel_strike_filter.get_result();
+}
+
+// printing loop
+void print_loop()
+{
+
+  auto phase_currents = Current_Sensors.get_phase_currents();
+  auto qd_currents = controller_.get_qd_current();
+
+  Serial.print(">setpoint:");
+  Serial.println(target_angle, 3);
+
+  Serial.print(">system_pos:");
+  Serial.println(system_angle, 3);
+
+  Serial.print(">system_vel:");
+  Serial.println(system_vel, 3);
+
+  Serial.print(">error:");
+  Serial.println(float(target_angle-system_angle), 3);
+
+  Serial.print(">torque_target:");
+  Serial.println(target, 3);
+
+  Serial.print(">i_phase_a:");
+  Serial.println(phase_currents.a, 3);
+
+  Serial.print(">i_phase_b:");
+  Serial.println(phase_currents.b, 3);
+
+  Serial.print(">i_phase_c:");
+  Serial.println(phase_currents.c, 3);
+
+  Serial.print(">i_quaddirect_q:");
+  Serial.println(qd_currents.q, 3);
+
+  Serial.print(">i_quaddirect_d:");
+  Serial.println(qd_currents.d, 3);
+
+  Serial.print(">ax_g:");
+  Serial.println(imu_data.x, 3);
+
+  Serial.print(">ay_g:");
+  Serial.println(imu_data.y, 3);
+
+  Serial.print(">az_g:");
+  Serial.println(imu_data.z, 3);
+
+  Serial.print(">acc_mag_mav:");
+  Serial.println(heel_strike_filter.get_mav_result(), 3);
+
+  Serial.print(">acc_medio_lateral_mav:");
+  Serial.println(heel_strike_filter.get_medio_lateral_mav_result(), 3);
+
+  Serial.print(">period:");
+  Serial.println(heel_strike_result.period);
+
+  Serial.print(">classification:");
+  Serial.println(static_cast<int>(heel_strike_result.classification));
+
+  Serial.print(">hs_count:");
+  Serial.println(heel_strike_result.count);
+
+  Serial.print(">sum:");
+  Serial.println(heel_strike_result.sum, 3);
+
+  Serial.print(">enabler:");
+  Serial.println(controller_enabler);
+
+  Serial.print(">alpha:");
+  Serial.println(alpha, 3);
+
+  Serial.print(">count:");
+  Serial.println(count);
+
+  Serial.print(">traj_length:");
+  Serial.println(int(trajectory.bck_len + trajectory.fwd_len));
+
+  Serial.print(">confidence:");
+  Serial.println(heel_strike_result.confidence);
+}
+
+void setup()
+{
+  while (!Serial) {}
+
+  imu.init();
+
+  p_controller_.set_gvty_ffwd_control(false);
+  p_controller_.set_spring_ffwd_control(false);
+  p_controller_.set_u_clamp_val(0.6);
+  p_controller_.set_theta_rest_val(-.264);
+  
+  TeensyTimerTool::attachErrFunc(timer_errors);
+  analogReadAveraging(1);
+
+  Serial.println("Hell yeah!");
+
+  if (!controller_.init_components()) {
+    Serial.println("Motor controller component failed to init");
+    exit(0);
+  }
+
+  Serial.println("Aligning");
 
 
-//   auto torque = std::clamp(1.f * (maxon_zero_angle - ang), EC45_Flat.kT * -3.f, EC45_Flat.kT * 3.f);
+  // define and load calibration
+  const PhaseValues<int> cs_phase_idx{-1, 1, 0};
+  const PhaseValues<int> cs_phase_dirs{0, 1, 1};
+  const int encoder_direction{-1};
+  const float eangle_offset{2.85f};
+  const float cogging_offset = 0.f;  // hopefully this is 0???
+  auto calib = BrushlessCalibration{cs_phase_idx, cs_phase_dirs, encoder_direction, eangle_offset, cogging_offset};
+  controller_.load_calibration(calib);
 
-//   Serial.println(torque);
+  // comment alginment out if using pre-defined calibration
+  // controller_.set_calibration_scan_range(0.3); 
+  // controller_.set_calibration_scan_speed(0.1);
+  // if (!controller_.align_sensors()) {
+  //   Serial.println("Motor controller component failed to align");
+  //   exit(0);
+  // }
+  // controller_.print_calibration();
 
-//   MaxonController.set_target(torque);
-//   MaxonController.update_control();
+  Serial.println("Preparing to run");
+  delay(1000);
 
-//   // indx++;
-//   // if(indx = 100){
-//   //   // Serial.print(ang, 6);
-//   //   // Serial.print("\t");
-//   //   // Serial.println(MosracController.get_shaft_velocity(), 6);
-//   //   indx = 0;
-//   // }
+  controller_.set_control_mode(ControllerMode::TORQUE);
+  controller_.set_position_filter({{0.25f, 0.25f, 0.25f, 0.25f}, {}});
+  controller_.set_velocity_filter(vel_filter_200_);
+  controller_.set_feedforward_state(true);
+  controller_.set_feedback_state(false);
+  controller_.set_back_emf_comp_state(false);
 
-// }
+  controller_.set_target(0.0f);
 
-// void setup()
-// {
-//   while (!Serial) {}
+  if (STAND_TESTING) {
+    trajectory = swing_lut_lookup(1.131680f);
+    controller_enabler = true;
+    controller_.start_control(100, false);
+    rt_side_state = Classification::LEFT;
+    prev_trajectory = trajectory;
+    target = .25f;
+  }
 
-// //   TeensyTimerTool::attachErrFunc(timer_errors);
-// //   analogReadAveraging(1);
+  // begin timers, rate in micro-seconds
+  current_control_timer_.begin(current_control_loop, 100);
+  command_update_timer_.begin(command_update_loop, 10000);
+  position_control_timer_.begin(position_control_loop, 1000);
+  imu_timer_.begin(imu_loop, 1000);
+  print_timer_.begin(print_loop, 10000);
+  
+}
 
-// //   Serial.println("Hell yeah!");
-
-
-//   // if (!MosracController.init_components()) {
-//   //   Serial.println("Motor controller component failed to init");
-//   //   exit(0);
-//   // }
-//   // Serial.println("Aligning");
-
-//   // auto ret_align = 
-//   // if (!MosracController.align_sensors(1, false)) {
-//   //   Serial.println("Motor controller component failed to align");
-//   //   exit(0);
-//   // }
-
-//   if (!MaxonController.init_components()) {
-//     Serial.println("Motor controller component failed to init");
-//     exit(0);
-//   }
-//   Serial.println("Aligning");
-
-//   if (!MaxonController.align_sensors(-1, false)) {
-//     Serial.println("Motor controller component failed to align");
-//     exit(0);
-//   }
-
-//   Serial.println("Preparing to run");
-//   delay(1000);
-
-//   // MosracController.set_control_mode(ControllerMode::TORQUE);
-//   // MosracController.set_target(0.f);
-
-//   MaxonController.set_control_mode(ControllerMode::TORQUE);
-//   MaxonController.set_target(0.f);
-
-//   MaxonController.set_feedforward_state(true);
-//   MaxonController.set_feedback_state(false);
-//   MaxonController.set_back_emf_comp_state(false);
-
-
-//   // MosracController.enable_anticog(MosracVoltageCoggingMap);
-
-//   MaxonController.set_velocity_filter(vel_filter);
-//   MaxonController.set_position_filter(pos_filter);
-
-
-//   // MosracController.update_sensors();
-//   MaxonController.update_sensors();
-
-//   // mosrac_zero_angle = MosracController.get_shaft_angle();
-//   maxon_zero_angle = MaxonController.get_shaft_angle();
-
-//   // MosracController.start_control(100, false);
-//   MaxonController.start_control(100, false);
-
-// //   // cogging_mapper.map_cogging(1);
-
-//   // timer_.begin(update, 100);
-//   // timer_.begin(bilateral, 100);
-//   timer_.begin(pos_cont, 100);
-
-// }
-
-// void loop()
-// {
-//   // Serial.println(Encoder1.read_raw());
-//   // Serial.println(Encoder2.read_raw());
-//   // delay(10);
-// }
+void loop() {}
