@@ -2,6 +2,8 @@
 * Michael Jenz
 * 2026
 
+Forked from [NU-AIET/NUControl](https://github.com/NU-AIET/NUControl)
+
 Firmware for a Teensy 4.0-based controller that drives a brushless prosthetic arm during variable-speed walking. Uses IMU-based heel strike detection to identify gait phase and tracks a speed-dependent swing trajectory via FOC torque control.
 
 ## Hardware
